@@ -95,7 +95,7 @@ export const VideoExportModal: React.FC<VideoExportModalProps> = ({ isOpen, onCl
 
     return new Promise<void>((resolve, reject) => {
       const xhr = new XMLHttpRequest();
-      xhr.open('POST', (process.env.REACT_APP_EXPORT_SERVER_URL || 'http://localhost:4000') + '/api/video/export', true);
+      xhr.open('POST', (process.env.REACT_APP_EXPORT_SERVER_URL || '') + '/api/video/export-capcut', true);
       xhr.responseType = 'blob';
 
       xhr.upload.onprogress = (ev) => {
