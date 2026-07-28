@@ -15,7 +15,7 @@ import {
   Loader2,
   AlignCenter,
   Mic,
-  Music
+  Film
 } from 'lucide-react';
 import { useVideoProcessing } from '../contexts/VideoProcessingContext';
 import { useSettings } from '../contexts/SettingsContext';
@@ -82,10 +82,8 @@ export const VideoPlayer: React.FC = () => {
     setZoomLevel,
     isMirrored,
     setIsMirrored,
-    volume,
-    setVolume,
-    dubVolume,
-    setDubVolume,
+    dubbingVolume,
+    setDubbingVolume,
     originalVideoVolume,
     setOriginalVideoVolume,
     isTextAutoCentered,
@@ -150,7 +148,7 @@ export const VideoPlayer: React.FC = () => {
                 preload="auto"
                 playsInline
                 onTimeUpdate={handleTimeUpdate}
-                onPlay={() => { if (audioElementRef.current) audioElementRef.current.play(); }}
+                onPlay={() => { if (audioElementRef.current) audioElementRef.current.play().catch(() => {}); }}
                 onPause={() => { if (audioElementRef.current) audioElementRef.current.pause(); }}
                 onSeeked={(e) => {
                   if (audioElementRef.current) {
@@ -161,11 +159,11 @@ export const VideoPlayer: React.FC = () => {
                   }
                 }}
                 onWaiting={() => { if (audioElementRef.current) audioElementRef.current.pause(); }}
-                onPlaying={() => { if (audioElementRef.current) audioElementRef.current.play(); }}
+                onPlaying={() => { if (audioElementRef.current) audioElementRef.current.play().catch(() => {}); }}
                 onLoadedMetadata={(e) => {
                   if (previewCanvasRef.current) {
-                    previewCanvasRef.current.width = 1280;
-                    previewCanvasRef.current.height = 720;
+                    previewCanvasRef.current.width = e.currentTarget.videoWidth || 1280;
+                    previewCanvasRef.current.height = e.currentTarget.videoHeight || 720;
                   }
                   e.currentTarget.currentTime = 0.001;
                   setBlurBox(prev => prev.h > 0 ? prev : { x: 0, y: 83, w: 100, h: 14 });
@@ -747,134 +745,67 @@ export const VideoPlayer: React.FC = () => {
               <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
                 <div className="flex items-center gap-2 text-emerald-400 font-bold text-sm">
                   <Volume2 size={18} />
-                  <span>Cấu hình Âm Lượng (Volume Settings)</span>
-                </div>
-                {generatedAudioUrl && (
-                  <span className="px-2 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded text-[11px] font-medium">
-                    Đang lồng tiếng AI
-                  </span>
-                )}
-              </div>
-
-              {/* 1. Âm lượng Lồng tiếng AI */}
-              <div className="flex flex-col gap-2.5 bg-zinc-950 p-4 border border-zinc-800 rounded-lg">
-                <div className="flex justify-between items-center text-xs font-bold text-zinc-200">
-                  <div className="flex items-center gap-2">
-                    <Mic size={16} className="text-emerald-400" />
-                    <span>Âm lượng Lồng tiếng AI (Dubbing Volume)</span>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <input
-                      type="number"
-                      min="0"
-                      max="200"
-                      value={dubVolume}
-                      onChange={e => setDubVolume(Math.min(200, Math.max(0, parseInt(e.target.value) || 0)))}
-                      className="w-16 px-1.5 py-0.5 bg-zinc-900 border border-zinc-700 rounded text-right text-emerald-400 font-bold font-mono outline-none focus:border-emerald-500 text-xs"
-                    />
-                    <span className="text-zinc-500 text-[11px]">%</span>
-                  </div>
-                </div>
-
-                <input
-                  type="range"
-                  min="0"
-                  max="200"
-                  value={dubVolume}
-                  onChange={e => setDubVolume(Number(e.target.value))}
-                  className="accent-emerald-500 w-full cursor-pointer h-1.5 bg-zinc-800 rounded-lg"
-                />
-
-                <div className="grid grid-cols-4 gap-1.5 mt-1 text-[11px]">
-                  <button
-                    type="button"
-                    onClick={() => setDubVolume(0)}
-                    className={`py-1 rounded border text-center transition-colors ${dubVolume === 0 ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-400 font-bold' : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-zinc-200'}`}
-                  >
-                    Tắt (0%)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setDubVolume(100)}
-                    className={`py-1 rounded border text-center transition-colors ${dubVolume === 100 ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-400 font-bold' : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-zinc-200'}`}
-                  >
-                    Chuẩn (100%)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setDubVolume(150)}
-                    className={`py-1 rounded border text-center transition-colors ${dubVolume === 150 ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-400 font-bold' : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-zinc-200'}`}
-                  >
-                    Tăng âm (150%)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setDubVolume(200)}
-                    className={`py-1 rounded border text-center transition-colors ${dubVolume === 200 ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-400 font-bold' : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-zinc-200'}`}
-                  >
-                    Cực đại (200%)
-                  </button>
+                  <span>Cấu hình Âm lượng (Audio Volume Settings)</span>
                 </div>
               </div>
 
-              {/* 2. Âm lượng Video Gốc */}
-              <div className="flex flex-col gap-2.5 bg-zinc-950 p-4 border border-zinc-800 rounded-lg">
-                <div className="flex justify-between items-center text-xs font-bold text-zinc-200">
-                  <div className="flex items-center gap-2">
-                    <Music size={16} className="text-amber-400" />
-                    <span>Âm lượng Video Gốc / Nhạc nền (Original Video)</span>
+              <div className="flex flex-col gap-4 text-xs">
+                {/* Âm lượng Lồng tiếng */}
+                <div className="flex flex-col gap-2.5 bg-zinc-950 p-3.5 border border-zinc-800/80 rounded-lg">
+                  <div className="flex justify-between items-center font-semibold text-zinc-200">
+                    <div className="flex items-center gap-2 text-emerald-400">
+                      <Mic size={16} />
+                      <span>Âm lượng Lồng tiếng (Dubbing Voice)</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="number"
+                        min="0"
+                        max="100"
+                        value={dubbingVolume}
+                        onChange={e => setDubbingVolume(Math.min(100, Math.max(0, parseInt(e.target.value) || 0)))}
+                        className="w-16 px-2 py-0.5 bg-zinc-900 border border-zinc-700 rounded text-center text-emerald-400 font-bold text-xs outline-none focus:border-emerald-500 font-mono"
+                      />
+                      <span className="text-zinc-500 font-medium">%</span>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-1">
-                    <input
-                      type="number"
-                      min="0"
-                      max="100"
-                      value={originalVideoVolume}
-                      onChange={e => setOriginalVideoVolume(Math.min(100, Math.max(0, parseInt(e.target.value) || 0)))}
-                      className="w-16 px-1.5 py-0.5 bg-zinc-900 border border-zinc-700 rounded text-right text-emerald-400 font-bold font-mono outline-none focus:border-emerald-500 text-xs"
-                    />
-                    <span className="text-zinc-500 text-[11px]">%</span>
-                  </div>
+                  <input
+                    type="range"
+                    min="0"
+                    max="100"
+                    value={dubbingVolume}
+                    onChange={e => setDubbingVolume(Number(e.target.value))}
+                    className="accent-emerald-500 w-full cursor-pointer h-1.5 bg-zinc-800 rounded-lg"
+                  />
                 </div>
 
-                <input
-                  type="range"
-                  min="0"
-                  max="100"
-                  value={originalVideoVolume}
-                  onChange={e => setOriginalVideoVolume(Number(e.target.value))}
-                  className="accent-emerald-500 w-full cursor-pointer h-1.5 bg-zinc-800 rounded-lg"
-                />
-
-                <div className="grid grid-cols-4 gap-1.5 mt-1 text-[11px]">
-                  <button
-                    type="button"
-                    onClick={() => setOriginalVideoVolume(0)}
-                    className={`py-1 rounded border text-center transition-colors ${originalVideoVolume === 0 ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-400 font-bold' : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-zinc-200'}`}
-                  >
-                    Tắt âm (0%)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setOriginalVideoVolume(20)}
-                    className={`py-1 rounded border text-center transition-colors ${originalVideoVolume === 20 ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-400 font-bold' : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-zinc-200'}`}
-                  >
-                    Nhạc nhỏ (20%)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setOriginalVideoVolume(50)}
-                    className={`py-1 rounded border text-center transition-colors ${originalVideoVolume === 50 ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-400 font-bold' : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-zinc-200'}`}
-                  >
-                    Vừa (50%)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setOriginalVideoVolume(100)}
-                    className={`py-1 rounded border text-center transition-colors ${originalVideoVolume === 100 ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-400 font-bold' : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-zinc-200'}`}
-                  >
-                    Gốc (100%)
-                  </button>
+                {/* Âm lượng Video Gốc */}
+                <div className="flex flex-col gap-2.5 bg-zinc-950 p-3.5 border border-zinc-800/80 rounded-lg">
+                  <div className="flex justify-between items-center font-semibold text-zinc-200">
+                    <div className="flex items-center gap-2 text-emerald-400">
+                      <Film size={16} />
+                      <span>Âm lượng Video Gốc (Original Video)</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="number"
+                        min="0"
+                        max="100"
+                        value={originalVideoVolume}
+                        onChange={e => setOriginalVideoVolume(Math.min(100, Math.max(0, parseInt(e.target.value) || 0)))}
+                        className="w-16 px-2 py-0.5 bg-zinc-900 border border-zinc-700 rounded text-center text-emerald-400 font-bold text-xs outline-none focus:border-emerald-500 font-mono"
+                      />
+                      <span className="text-zinc-500 font-medium">%</span>
+                    </div>
+                  </div>
+                  <input
+                    type="range"
+                    min="0"
+                    max="100"
+                    value={originalVideoVolume}
+                    onChange={e => setOriginalVideoVolume(Number(e.target.value))}
+                    className="accent-emerald-500 w-full cursor-pointer h-1.5 bg-zinc-800 rounded-lg"
+                  />
                 </div>
               </div>
             </div>

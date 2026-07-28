@@ -6,8 +6,6 @@ import { Header } from './components/Header';
 import { FileInputSection } from './components/FileInputSection';
 import { VideoPlayer } from './components/VideoPlayer';
 import { SubtitleEditor } from './components/SubtitleEditor';
-import { ExportSection } from './components/ExportSection';
-import { ExportDialog } from './components/ExportDialog';
 import { PythonScriptModal } from './components/PythonScriptModal';
 
 export default function App() {
@@ -21,10 +19,8 @@ export default function App() {
               <FileInputSection />
               <VideoPlayer />
               <SubtitleEditor />
-              <ExportSection />
             </div>
 
-            <ExportDialog />
             <PythonScriptModal />
           </div>
         </VideoProcessingProvider>

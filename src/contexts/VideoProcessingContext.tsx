@@ -2,19 +2,16 @@ import React, { createContext, useContext, useEffect, useRef } from 'react';
 import { useVideoState } from '../hooks/useVideoState';
 import { useTTSPipeline } from '../hooks/useTTSPipeline';
 import { useBlurDetection } from '../hooks/useBlurDetection';
-import { useVideoExport } from '../hooks/useVideoExport';
 import { useSettings } from './SettingsContext';
-import { drawVideoFrame } from '../VideoFrameRenderer';
+import { drawVideoFrame } from '../VideoRenderer';
 
 type VideoProcessingContextType = ReturnType<typeof useVideoState> &
   ReturnType<typeof useTTSPipeline> &
-  ReturnType<typeof useBlurDetection> &
-  ReturnType<typeof useVideoExport> & {
+  ReturnType<typeof useBlurDetection> & {
     showPythonModal: boolean;
     setShowPythonModal: React.Dispatch<React.SetStateAction<boolean>>;
     handleFullscreen: () => void;
     handleFileChange: (setter: React.Dispatch<React.SetStateAction<File | null>>) => (e: React.ChangeEvent<HTMLInputElement>) => void;
-    handleProcess: () => void;
     videoRef: React.RefObject<HTMLInputElement | null>;
     subtitleRef: React.RefObject<HTMLInputElement | null>;
     logoRef: React.RefObject<HTMLInputElement | null>;
@@ -40,8 +37,6 @@ export const VideoProcessingProvider: React.FC<{ children: React.ReactNode }> = 
     videoState.blurBoxRef,
     videoState.logoImgRef
   );
-
-  const videoExport = useVideoExport();
 
   const [showPythonModal, setShowPythonModal] = React.useState(false);
 
@@ -69,16 +64,12 @@ export const VideoProcessingProvider: React.FC<{ children: React.ReactNode }> = 
   // Audio volume sync
   useEffect(() => {
     if (videoState.videoElementRef.current) {
-      if (ttsPipeline.generatedAudioUrl) {
-        videoState.videoElementRef.current.volume = Math.max(0, Math.min(1, settings.originalVideoVolume / 100));
-      } else {
-        videoState.videoElementRef.current.volume = Math.max(0, Math.min(1, settings.originalVideoVolume / 100));
-      }
+      videoState.videoElementRef.current.volume = Math.max(0, Math.min(1, settings.originalVideoVolume / 100));
     }
     if (videoState.audioElementRef.current) {
-      videoState.audioElementRef.current.volume = Math.max(0, Math.min(1, settings.dubVolume / 100));
+      videoState.audioElementRef.current.volume = Math.max(0, Math.min(1, settings.dubbingVolume / 100));
     }
-  }, [settings.volume, settings.dubVolume, settings.originalVideoVolume, ttsPipeline.generatedAudioUrl, videoState.videoElementRef, videoState.audioElementRef]);
+  }, [settings.originalVideoVolume, settings.dubbingVolume, videoState.videoElementRef, videoState.audioElementRef]);
 
   // Playback rate sync
   useEffect(() => {
@@ -111,16 +102,29 @@ export const VideoProcessingProvider: React.FC<{ children: React.ReactNode }> = 
     let animationFrameId: number;
 
     const syncCanvasDimensions = () => {
-      if (videoState.previewCanvasRef.current) {
+      if (videoState.previewCanvasRef.current && videoState.videoElementRef.current) {
+        const v = videoState.videoElementRef.current;
         const c = videoState.previewCanvasRef.current;
+        const dpr = Math.max(1, window.devicePixelRatio || 1);
         const rect = c.getBoundingClientRect();
         if (rect.width > 0) {
           rectWidthRef.current = rect.width;
         }
 
-        if (c.width !== 1280 || c.height !== 720) {
-          c.width = 1280;
-          c.height = 720;
+        const nativeW = v.videoWidth || 1280;
+        const nativeH = v.videoHeight || 720;
+
+        let targetW = nativeW;
+        let targetH = nativeH;
+
+        if (rect.width > 0 && rect.height > 0) {
+          targetW = Math.min(1920, Math.max(nativeW, Math.round(rect.width * dpr)));
+          targetH = Math.min(1080, Math.round(targetW * (nativeH / nativeW)));
+        }
+
+        if (c.width !== targetW || c.height !== targetH) {
+          c.width = targetW;
+          c.height = targetH;
         }
       }
     };
@@ -231,48 +235,16 @@ export const VideoProcessingProvider: React.FC<{ children: React.ReactNode }> = 
     }
   };
 
-  const handleProcess = () => {
-    videoExport.startExport({
-      videoFile: videoState.videoFile,
-      videoUrl: videoState.videoUrl,
-      generatedAudioUrl: ttsPipeline.generatedAudioUrl,
-      videoPlaybackRate: videoState.videoPlaybackRate,
-      zoomLevel: settings.zoomLevel,
-      isMirrored: settings.isMirrored,
-      blurIntensity: settings.blurIntensity,
-      blurBox: settings.blurBox,
-      showBgBar: settings.showBgBar,
-      logoUrl: videoState.logoUrl,
-      logoX: settings.logoX,
-      logoY: settings.logoY,
-      logoScale: settings.logoScale,
-      subtitles: ttsPipeline.subtitles,
-      isTextAutoCentered: settings.isTextAutoCentered,
-      textX: settings.textX,
-      textY: settings.textY,
-      fontSize: settings.fontSize,
-      strokeWidth: settings.strokeWidth,
-      volume: settings.volume,
-      dubVolume: settings.dubVolume,
-      originalVideoVolume: settings.originalVideoVolume,
-      containerWidth: videoState.containerRef.current?.clientWidth || 800,
-      syncCheckpoints: ttsPipeline.syncCheckpoints,
-      dubAudioPositions: ttsPipeline.dubAudioPositions
-    });
-  };
-
   return (
     <VideoProcessingContext.Provider
       value={{
         ...videoState,
         ...ttsPipeline,
         ...blurDetection,
-        ...videoExport,
         showPythonModal,
         setShowPythonModal,
         handleFullscreen,
         handleFileChange,
-        handleProcess,
         videoRef,
         subtitleRef,
         logoRef,

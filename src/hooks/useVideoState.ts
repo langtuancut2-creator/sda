@@ -43,7 +43,7 @@ export const useVideoState = () => {
   const togglePlayPause = useCallback(() => {
     if (videoElementRef.current) {
       if (videoElementRef.current.paused) {
-        videoElementRef.current.play();
+        videoElementRef.current.play().catch(() => {});
       } else {
         videoElementRef.current.pause();
       }

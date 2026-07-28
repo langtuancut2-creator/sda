@@ -48,12 +48,12 @@ export class AITextDetectionEngine {
     }
 
     const ctx = AITextDetectionEngine.cachedGeminiCtx;
-    if (ctx) {
-      ctx.drawImage(videoEl, 0, 0, vw, vh);
-    }
-    const base64Image = AITextDetectionEngine.cachedGeminiCanvas.toDataURL('image/jpeg', 0.85);
-
     try {
+      if (ctx) {
+        ctx.drawImage(videoEl, 0, 0, vw, vh);
+      }
+      const base64Image = AITextDetectionEngine.cachedGeminiCanvas.toDataURL('image/jpeg', 0.85);
+
       const response = await fetch('/api/detect-subtitle', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -169,7 +169,13 @@ export class AITextDetectionEngine {
     );
 
     // PERF: Read pixel data for scan area from small canvas | Fix: RC#2 & RC#3
-    const imgData = ctx.getImageData(0, 0, vw, scanHeight);
+    let imgData: ImageData;
+    try {
+      imgData = ctx.getImageData(0, 0, vw, scanHeight);
+    } catch (e) {
+      console.warn('getImageData failed (tainted canvas):', e);
+      return defaultBox;
+    }
     const pixels = imgData.data;
 
     // =========================================================================

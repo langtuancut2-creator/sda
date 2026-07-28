@@ -82,7 +82,12 @@ export async function buildDubbedAudioTrackV2(
   sessionId?: string
 ): Promise<DubResult> {
   const sampleRate = 48000;
-  const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate });
+  let audioCtx: AudioContext;
+  try {
+    audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate });
+  } catch {
+    audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+  }
 
   // Early return nếu không có subtitle nào
   if (!subtitles || subtitles.length === 0) {

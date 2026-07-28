@@ -26,10 +26,8 @@ interface SettingsContextType {
   setZoomLevel: React.Dispatch<React.SetStateAction<number>>;
   isMirrored: boolean;
   setIsMirrored: React.Dispatch<React.SetStateAction<boolean>>;
-  volume: number;
-  setVolume: React.Dispatch<React.SetStateAction<number>>;
-  dubVolume: number;
-  setDubVolume: React.Dispatch<React.SetStateAction<number>>;
+  dubbingVolume: number;
+  setDubbingVolume: React.Dispatch<React.SetStateAction<number>>;
   originalVideoVolume: number;
   setOriginalVideoVolume: React.Dispatch<React.SetStateAction<number>>;
   isTextAutoCentered: boolean;
@@ -65,9 +63,8 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [logoY, setLogoY] = useState(50);
   const [zoomLevel, setZoomLevel] = useState(100);
   const [isMirrored, setIsMirrored] = useState(false);
-  const [volume, setVolume] = useState(0);
-  const [dubVolume, setDubVolume] = useState(100);
-  const [originalVideoVolume, setOriginalVideoVolume] = useState(0);
+  const [dubbingVolume, setDubbingVolume] = useState(100);
+  const [originalVideoVolume, setOriginalVideoVolume] = useState(100);
   const [isTextAutoCentered, setIsTextAutoCentered] = useState(true);
   const [isEditing, setIsEditing] = useState(false);
   const [showTimeline, setShowTimeline] = useState(false);
@@ -92,8 +89,7 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         logoY, setLogoY,
         zoomLevel, setZoomLevel,
         isMirrored, setIsMirrored,
-        volume, setVolume,
-        dubVolume, setDubVolume,
+        dubbingVolume, setDubbingVolume,
         originalVideoVolume, setOriginalVideoVolume,
         isTextAutoCentered, setIsTextAutoCentered,
         isEditing, setIsEditing,

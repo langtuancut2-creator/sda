@@ -3,7 +3,7 @@ import { SyncCheckpoint, videoTimeToAudioTime } from './DubbingAudioEngine';
 
 export interface GraphicsFrameParams {
   ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
-  renderVideo: CanvasImageSource | HTMLVideoElement;
+  renderVideo: HTMLVideoElement;
   currentTime: number;
   videoWidth: number;
   videoHeight: number;
@@ -31,7 +31,11 @@ export interface GraphicsFrameParams {
   activeSubtitleTextOverride?: string | null;
 }
 
-export function drawVideoFrame(params: GraphicsFrameParams): void {
+/**
+ * Render frame graphics layers (Video zoom/mirror, blur box, logo, subtitles)
+ * Used for Live Preview Canvas
+ */
+export function drawGraphicsFrame(params: GraphicsFrameParams): void {
   const {
     ctx,
     renderVideo,
@@ -62,31 +66,32 @@ export function drawVideoFrame(params: GraphicsFrameParams): void {
     activeSubtitleTextOverride
   } = params;
 
-  if (videoWidth === 0 || videoHeight === 0) return;
-
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
   ctx.clearRect(0, 0, videoWidth, videoHeight);
 
-  const isVideoReady = !('readyState' in renderVideo) || (renderVideo as HTMLVideoElement).readyState >= 2;
-
-  // 1. Base Video (Zoom & Mirror)
-  ctx.save();
-  ctx.translate(videoWidth / 2, videoHeight / 2);
+  // A. Base Video (Zoom & Mirror)
   const zoomFactor = zoomLevel / 100;
   const mirrorFactor = isMirrored ? -1 : 1;
-  ctx.scale(zoomFactor * mirrorFactor, zoomFactor);
-  if (isVideoReady) {
-    ctx.drawImage(renderVideo, -videoWidth / 2, -videoHeight / 2, videoWidth, videoHeight);
-  }
-  ctx.restore();
 
-  // 2. Blur Box
+  if (renderVideo.readyState >= 2) {
+    if (zoomLevel === 100 && !isMirrored) {
+      ctx.drawImage(renderVideo, 0, 0, videoWidth, videoHeight);
+    } else {
+      ctx.save();
+      ctx.translate(videoWidth / 2, videoHeight / 2);
+      ctx.scale(zoomFactor * mirrorFactor, zoomFactor);
+      ctx.drawImage(renderVideo, -videoWidth / 2, -videoHeight / 2, videoWidth, videoHeight);
+      ctx.restore();
+    }
+  }
+
+  // B. Blur Box
   if (blurIntensity > 0 && blurBox.h > 0) {
     const bx = 0;
-    const by = Math.max(0, (blurBox.y / 100) * videoHeight);
+    const by = Math.max(0, Math.floor((blurBox.y / 100) * videoHeight));
     const bw = videoWidth;
-    const bh = Math.min(videoHeight - by, (blurBox.h / 100) * videoHeight);
+    const bh = Math.min(videoHeight - by, Math.ceil((blurBox.h / 100) * videoHeight));
 
     if (bw > 0 && bh > 0) {
       const blurPx = Math.max(1, Math.round(blurIntensity * scaleFactor));
@@ -99,21 +104,32 @@ export function drawVideoFrame(params: GraphicsFrameParams): void {
       ctx.fillStyle = `rgba(0, 0, 0, ${bgOpacity})`;
       ctx.fillRect(bx, by, bw, bh);
 
-      if (isVideoReady) {
-        ctx.save();
+      if (renderVideo.readyState >= 2) {
         ctx.filter = `blur(${blurPx}px)`;
-        const pad = Math.max(16, blurPx * 2);
-        ctx.translate(videoWidth / 2, videoHeight / 2);
-        ctx.scale(zoomFactor * mirrorFactor, zoomFactor);
-        ctx.drawImage(renderVideo, -videoWidth / 2 - pad / 2, -videoHeight / 2 - pad / 2, videoWidth + pad, videoHeight + pad);
-        ctx.restore();
+        const pad = Math.max(12, blurPx * 2);
+        const cropY = Math.max(0, by - pad);
+        const cropH = Math.min(videoHeight - cropY, bh + pad * 2);
+
+        if (zoomLevel === 100 && !isMirrored) {
+          ctx.drawImage(
+            renderVideo,
+            0, cropY, videoWidth, cropH,
+            0, cropY, videoWidth, cropH
+          );
+        } else {
+          ctx.save();
+          ctx.translate(videoWidth / 2, videoHeight / 2);
+          ctx.scale(zoomFactor * mirrorFactor, zoomFactor);
+          ctx.drawImage(renderVideo, -videoWidth / 2, -videoHeight / 2, videoWidth, videoHeight);
+          ctx.restore();
+        }
       }
 
       ctx.restore();
     }
   }
 
-  // 3. Logo Overlay
+  // C. Logo Overlay
   if (logoImg) {
     const lx = (logoX / 100) * videoWidth;
     const ly = (logoY / 100) * videoHeight;
@@ -125,7 +141,7 @@ export function drawVideoFrame(params: GraphicsFrameParams): void {
     ctx.drawImage(logoImg as CanvasImageSource, lx - lw / 2, ly - lh / 2, lw, lh);
   }
 
-  // 4. Subtitle Resolution
+  // D. Subtitle Resolution
   let activeSubtitleText: string | null = null;
   if (activeSubtitleTextOverride !== undefined) {
     activeSubtitleText = activeSubtitleTextOverride;
@@ -136,7 +152,10 @@ export function drawVideoFrame(params: GraphicsFrameParams): void {
     audioCurrentTime !== undefined
   ) {
     activeSubtitleText = getActiveSubtitleByAudioTime(subtitles, dubAudioPositions, audioCurrentTime);
-  } else if (syncCheckpoints && syncCheckpoints.length > 0) {
+  } else if (
+    syncCheckpoints &&
+    syncCheckpoints.length > 0
+  ) {
     const audioTime = videoTimeToAudioTime(currentTime, syncCheckpoints, videoPlaybackRate || 1);
     const audioPositions = (dubAudioPositions && dubAudioPositions.length === subtitles.length)
       ? dubAudioPositions
@@ -187,14 +206,14 @@ export function drawVideoFrame(params: GraphicsFrameParams): void {
       const barWidth = actualTextWidth + paddingX * 2;
       const barHeight = canvasFontSize + paddingY * 2;
 
-      const gradient = ctx.createLinearGradient(tx - barWidth / 2, ty, tx + barWidth / 2, ty);
+      const gradient = ctx.createLinearGradient(tx - barWidth/2, ty, tx + barWidth/2, ty);
       gradient.addColorStop(0, 'rgba(0,0,0,0)');
       gradient.addColorStop(0.12, 'rgba(0,0,0,0.65)');
       gradient.addColorStop(0.88, 'rgba(0,0,0,0.65)');
       gradient.addColorStop(1, 'rgba(0,0,0,0)');
 
       ctx.fillStyle = gradient;
-      ctx.fillRect(tx - barWidth / 2, ty - barHeight / 2, barWidth, barHeight);
+      ctx.fillRect(tx - barWidth/2, ty - barHeight/2, barWidth, barHeight);
     }
 
     ctx.textAlign = 'center';
@@ -213,3 +232,5 @@ export function drawVideoFrame(params: GraphicsFrameParams): void {
     ctx.restore();
   }
 }
+
+export const drawVideoFrame = drawGraphicsFrame;

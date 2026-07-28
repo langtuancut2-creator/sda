@@ -68,6 +68,10 @@ class LRUCache {
     return entry.result;
   }
 
+  getSize(): number {
+    return this.cache.size;
+  }
+
   has(key: string): boolean {
     return this.get(key) !== null;
   }
@@ -285,7 +289,7 @@ async function startServer() {
     return res.json({
       circuitBreakerState: circuitBreaker.getState(),
       metrics: metricsLogger.getStats(),
-      cacheSize: ttsCache['cache'].size
+      cacheSize: ttsCache.getSize()
     });
   });
 

@@ -1,14 +1,11 @@
 import React from 'react';
 import { Download, Loader2 } from 'lucide-react';
 import { useVideoProcessing } from '../contexts/VideoProcessingContext';
-import { VIETNAM_VOICE_PROFILES } from '../VietnamVoiceOptimizationEngine';
 import { formatMsToTimestamp } from '../hooks/useTTSPipeline';
 
 export const SubtitleEditor: React.FC = () => {
   const {
     subtitles,
-    voiceProfile,
-    setVoiceProfile,
     isGeneratingAudioTimeline,
     audioTimelineProgress,
     generateAudioTimeline,
@@ -23,9 +20,6 @@ export const SubtitleEditor: React.FC = () => {
           <h2 className="text-emerald-400 text-sm font-bold uppercase tracking-wider flex items-center gap-2">
             3. Lồng Tiếng AI CapCut & Phụ Đề
           </h2>
-          <span className="px-2 py-0.5 bg-amber-500/10 text-amber-400 border border-amber-500/20 rounded text-[11px] font-medium ml-2">
-            ⚡ SRT 0.5x
-          </span>
         </div>
 
         <div className="flex items-center gap-2">
@@ -48,19 +42,6 @@ export const SubtitleEditor: React.FC = () => {
             )}
           </button>
         </div>
-      </div>
-
-      <div className="flex items-center justify-between bg-zinc-950 p-3 rounded-lg border border-zinc-800">
-        <span className="text-xs text-zinc-400 font-medium">Chọn giọng đọc AI:</span>
-        <select
-          value={Object.keys(VIETNAM_VOICE_PROFILES).find(
-            k => VIETNAM_VOICE_PROFILES[k].name === voiceProfile.name
-          )}
-          onChange={(e) => setVoiceProfile(VIETNAM_VOICE_PROFILES[e.target.value])}
-          className="px-3 py-1.5 bg-zinc-900 border border-zinc-700 rounded text-xs text-zinc-200 focus:outline-none focus:border-emerald-500"
-        >
-          <option value="vn_female_neutral">Cô gái hoạt ngôn (chuẩn)</option>
-        </select>
       </div>
 
       {/* SRT Subtitle List */}
