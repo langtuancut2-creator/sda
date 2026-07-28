@@ -4,6 +4,7 @@ import { useVideoProcessing } from '../contexts/VideoProcessingContext';
 import { ExportSettings, ExportProgress } from '../types/VideoExport';
 import { useFrameExtraction } from '../hooks/useFrameExtraction';
 import { useAudioExportSync } from '../hooks/useAudioExportSync';
+import { ensureFontLoaded } from '../VideoRenderer';
 
 interface VideoExportModalProps {
   isOpen: boolean;
@@ -12,8 +13,8 @@ interface VideoExportModalProps {
 
 export const VideoExportModal: React.FC<VideoExportModalProps> = ({ isOpen, onClose }) => {
   const {
-    videoRef,
-    videoDuration,
+    videoElementRef,
+    videoDuration: rawVideoDuration,
     zoomLevel,
     isMirrored,
     blurIntensity,
@@ -51,6 +52,10 @@ export const VideoExportModal: React.FC<VideoExportModalProps> = ({ isOpen, onCl
   const cancelRef = useRef(false);
 
   if (!isOpen) return null;
+
+  const videoEl = videoElementRef.current;
+  const videoDuration = rawVideoDuration || videoEl?.duration || 0;
+  const isVideoValid = !!videoEl && videoDuration >= 1;
 
   const presets: Record<ExportSettings['quality'], { resolution: string; width: number; height: number; fps: 24 | 30; videoBitrate: string; audioBitrate: string; estSizeMBPerMin: number; label: string; desc: string }> = {
     fast: {
@@ -101,10 +106,8 @@ export const VideoExportModal: React.FC<VideoExportModalProps> = ({ isOpen, onCl
 
   const selectedPreset = presets[quality];
   const estSizeMB = Math.round((videoDuration / 60) * selectedPreset.estSizeMBPerMin) || 10;
-  const isVideoValid = !!videoRef.current && videoDuration >= 1;
-
   const handleStartExport = async () => {
-    if (!videoRef.current || videoDuration < 1) return;
+    if (!videoEl || videoDuration < 1) return;
 
     cancelRef.current = false;
     setIsExporting(true);
@@ -117,15 +120,10 @@ export const VideoExportModal: React.FC<VideoExportModalProps> = ({ isOpen, onCl
 
     try {
       // Step 1: Frame extraction
-      const videoEl = videoRef.current;
       const { width, height, fps, videoBitrate, audioBitrate, resolution } = selectedPreset;
 
       async function ensureAssetsReady(fontSpec = `bold ${fontSize}px "Bangers"`) {
-        try {
-          if (document.fonts && document.fonts.load) {
-            await document.fonts.load(fontSpec);
-          }
-        } catch (e) {}
+        await ensureFontLoaded(fontSpec);
         if (logoImg && !logoImg.complete) {
           await new Promise((resolve) => {
             logoImg.onload = () => resolve(null);

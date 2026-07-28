@@ -10,7 +10,7 @@ export interface GraphicsFrameParams {
   zoomLevel: number;
   isMirrored: boolean;
   blurIntensity: number;
-  blurBox: { x: number; y: number; w: number; h: number };
+  blurBox?: { x: number; y: number; w: number; h: number } | null;
   showBgBar: boolean;
   logoImg: HTMLImageElement | ImageBitmap | null;
   logoX: number;
@@ -114,14 +114,14 @@ function applyOptimizedBlur(
   video: HTMLVideoElement,
   videoWidth: number,
   videoHeight: number,
-  blurBox: { x: number; y: number; w: number; h: number },
+  blurBox: { x: number; y: number; w: number; h: number } | null | undefined,
   blurIntensity: number,
   scaleFactor: number,
   zoomLevel: number = 100,
   isMirrored: boolean = false,
   showBgBar: boolean = false
 ): void {
-  if (blurIntensity <= 0 || blurBox.h <= 0 || video.readyState < 2) {
+  if (blurIntensity <= 0 || !blurBox || blurBox.h <= 0 || video.readyState < 2) {
     return;
   }
 
@@ -280,6 +280,8 @@ export function drawGraphicsFrame(params: GraphicsFrameParams): void {
     activeSubtitleText = getActiveSubtitle(subtitles, currentTime);
   }
 
+  const safeBlurBox = blurBox || { x: 0, y: 70, w: 100, h: 20 };
+
   // Frame caching - Check if frame exists in cache
   const isPaused = renderVideo.paused || renderVideo.ended;
   const cacheKey = frameCache.generateCacheKey(
@@ -297,10 +299,10 @@ export function drawGraphicsFrame(params: GraphicsFrameParams): void {
     textY,
     isTextAutoCentered,
     showBgBar,
-    blurBox.x,
-    blurBox.y,
-    blurBox.w,
-    blurBox.h
+    safeBlurBox.x,
+    safeBlurBox.y,
+    safeBlurBox.w,
+    safeBlurBox.h
   );
 
   const cached = frameCache.get(cacheKey);
@@ -339,7 +341,7 @@ export function drawGraphicsFrame(params: GraphicsFrameParams): void {
   }
 
   // B. DRAW BLUR BOX
-  applyOptimizedBlur(ctx, renderVideo, videoWidth, videoHeight, blurBox, blurIntensity, scaleFactor, zoomLevel, isMirrored, showBgBar);
+  applyOptimizedBlur(ctx, renderVideo, videoWidth, videoHeight, safeBlurBox, blurIntensity, scaleFactor, zoomLevel, isMirrored, showBgBar);
 
   // C. DRAW LOGO OVERLAY
   if (logoImg) {
@@ -362,7 +364,7 @@ export function drawGraphicsFrame(params: GraphicsFrameParams): void {
       activeSubtitleText,
       videoWidth,
       videoHeight,
-      blurBox,
+      safeBlurBox,
       isTextAutoCentered,
       textX,
       textY,
@@ -390,21 +392,69 @@ export function drawGraphicsFrame(params: GraphicsFrameParams): void {
  */
 const subtitleMetrics = new Map<string, TextMetrics>();
 
-export function precomputeSubtitleMetrics(
-  ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
-  subtitles: Array<{ text: string }>,
-  fontSize: number
-): void {
-  ctx.save();
-  ctx.font = `bold ${fontSize}px "Bangers", cursive, sans-serif`;
-  for (const s of subtitles) {
-    const cleanText = s.text.replace(/\n/g, ' ');
-    const key = `${fontSize}_${cleanText}`;
-    if (!subtitleMetrics.has(key)) {
-      subtitleMetrics.set(key, ctx.measureText(cleanText));
+let tempOffscreenCtx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null = null;
+
+/**
+ * Helper to ensure font is loaded before heavy text measurement or export rendering.
+ */
+export async function ensureFontLoaded(fontSpec = `bold 24px "Bangers"`): Promise<void> {
+  if (typeof document !== 'undefined' && document.fonts && document.fonts.load) {
+    try {
+      await document.fonts.load(fontSpec);
+    } catch (e) {
+      // fallback gracefully if font load fails or font is unavailable
     }
   }
-  ctx.restore();
+}
+
+function getTempCanvasContext(): CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null {
+  if (tempOffscreenCtx) return tempOffscreenCtx;
+  if (typeof OffscreenCanvas !== 'undefined') {
+    const canvas = new OffscreenCanvas(1, 1);
+    tempOffscreenCtx = canvas.getContext('2d');
+  } else if (typeof document !== 'undefined') {
+    const canvas = document.createElement('canvas');
+    tempOffscreenCtx = canvas.getContext('2d');
+  }
+  return tempOffscreenCtx;
+}
+
+export function precomputeSubtitleMetrics(
+  ctxOrSubtitles: (CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D) | Array<{ text: string }>,
+  subtitlesOrFontSize?: Array<{ text: string }> | number,
+  fontSizeOrNothing?: number
+): void {
+  let ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null = null;
+  let subtitles: Array<{ text: string }> = [];
+  let fontSize = 24;
+
+  if (Array.isArray(ctxOrSubtitles)) {
+    subtitles = ctxOrSubtitles;
+    fontSize = typeof subtitlesOrFontSize === 'number' ? subtitlesOrFontSize : 24;
+    ctx = getTempCanvasContext();
+  } else {
+    ctx = ctxOrSubtitles;
+    subtitles = Array.isArray(subtitlesOrFontSize) ? subtitlesOrFontSize : [];
+    fontSize = fontSizeOrNothing ?? 24;
+  }
+
+  if (!ctx || !subtitles || subtitles.length === 0) return;
+
+  try {
+    ctx.save();
+    ctx.font = `bold ${fontSize}px "Bangers", cursive, sans-serif`;
+    for (const s of subtitles) {
+      if (!s || !s.text) continue;
+      const cleanText = s.text.replace(/\n/g, ' ');
+      const key = `${fontSize}_${cleanText}`;
+      if (!subtitleMetrics.has(key)) {
+        subtitleMetrics.set(key, ctx.measureText(cleanText));
+      }
+    }
+    ctx.restore();
+  } catch (e) {
+    /* ignore */
+  }
 }
 
 /**
@@ -417,7 +467,7 @@ function drawOptimizedSubtitle(
   textStr: string,
   videoWidth: number,
   videoHeight: number,
-  blurBox: { x: number; y: number; w: number; h: number },
+  blurBox: { x: number; y: number; w: number; h: number } | null | undefined,
   isTextAutoCentered: boolean,
   textX: number,
   textY: number,
@@ -426,8 +476,9 @@ function drawOptimizedSubtitle(
   showBgBar: boolean
 ): void {
   const cleanText = textStr.replace(/\n/g, ' ');
-  const renderBlurY = (blurBox.y / 100) * videoHeight;
-  const renderBlurH = (blurBox.h / 100) * videoHeight;
+  const safeBlur = blurBox || { x: 0, y: 70, w: 100, h: 20 };
+  const renderBlurY = (safeBlur.y / 100) * videoHeight;
+  const renderBlurH = (safeBlur.h / 100) * videoHeight;
 
   let tx: number, ty: number;
   if (isTextAutoCentered) {
@@ -448,7 +499,11 @@ function drawOptimizedSubtitle(
   ctx.font = `bold ${canvasFontSize}px "Bangers", cursive, sans-serif`;
 
   const key = `${canvasFontSize}_${cleanText}`;
-  const metrics = subtitleMetrics.get(key) ?? subtitleMetrics.get(`${fontSize}_${cleanText}`) ?? ctx.measureText(cleanText);
+  let metrics = subtitleMetrics.get(key) ?? subtitleMetrics.get(`${fontSize}_${cleanText}`);
+  if (!metrics) {
+    metrics = ctx.measureText(cleanText);
+    subtitleMetrics.set(key, metrics);
+  }
   let actualTextWidth = metrics.width;
 
   if (isTextAutoCentered) {
@@ -458,7 +513,12 @@ function drawOptimizedSubtitle(
       canvasFontSize = Math.floor(canvasFontSize * sf);
       ctx.font = `bold ${canvasFontSize}px "Bangers", cursive, sans-serif`;
       const scaledKey = `${canvasFontSize}_${cleanText}`;
-      actualTextWidth = subtitleMetrics.get(scaledKey)?.width ?? ctx.measureText(cleanText).width;
+      let scaledMetrics = subtitleMetrics.get(scaledKey);
+      if (!scaledMetrics) {
+        scaledMetrics = ctx.measureText(cleanText);
+        subtitleMetrics.set(scaledKey, scaledMetrics);
+      }
+      actualTextWidth = scaledMetrics.width;
     }
   }
 

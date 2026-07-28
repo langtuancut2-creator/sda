@@ -3,11 +3,12 @@ import { useVideoState } from '../hooks/useVideoState';
 import { useTTSPipeline } from '../hooks/useTTSPipeline';
 import { useBlurDetection } from '../hooks/useBlurDetection';
 import { useSettings } from './SettingsContext';
-import { drawVideoFrame, precomputeSubtitleMetrics } from '../VideoRenderer';
+import { drawVideoFrame, precomputeSubtitleMetrics, createThrottledRenderLoop, ensureFontLoaded } from '../VideoRenderer';
 
 type VideoProcessingContextType = ReturnType<typeof useVideoState> &
   ReturnType<typeof useTTSPipeline> &
   ReturnType<typeof useBlurDetection> & {
+    videoDuration: number;
     showPythonModal: boolean;
     setShowPythonModal: React.Dispatch<React.SetStateAction<boolean>>;
     handleFullscreen: () => void;
@@ -39,8 +40,11 @@ export const VideoProcessingProvider: React.FC<{ children: React.ReactNode }> = 
         const videoHeight = videoState.videoElementRef.current?.videoHeight || 720;
         const fontSizePercent = (settings.fontSize / 720) * 100;
         const canvasFontSize = (fontSizePercent / 100) * videoHeight;
-        precomputeSubtitleMetrics(ctx, ttsPipeline.subtitles, canvasFontSize);
-        precomputeSubtitleMetrics(ctx, ttsPipeline.subtitles, settings.fontSize);
+        // Ensure font is loaded before measuring text to avoid layout shifts / reflow mismatch
+        ensureFontLoaded(`bold ${canvasFontSize}px "Bangers"`).then(() => {
+          precomputeSubtitleMetrics(ctx, ttsPipeline.subtitles, canvasFontSize);
+          precomputeSubtitleMetrics(ctx, ttsPipeline.subtitles, settings.fontSize);
+        });
       }
     }
   }, [ttsPipeline.subtitles, settings.fontSize, videoState.previewCanvasRef, videoState.videoElementRef]);
@@ -108,13 +112,11 @@ export const VideoProcessingProvider: React.FC<{ children: React.ReactNode }> = 
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [settings, videoState.containerRef]);
 
-  // 60fps render loop
+  // Throttled 30fps render loop
   useEffect(() => {
     const canvas = videoState.previewCanvasRef.current;
     const video = videoState.videoElementRef.current;
     if (!canvas || !video) return;
-
-    let animationFrameId: number;
 
     const syncCanvasDimensions = () => {
       if (videoState.previewCanvasRef.current && videoState.videoElementRef.current) {
@@ -166,13 +168,11 @@ export const VideoProcessingProvider: React.FC<{ children: React.ReactNode }> = 
       const vh = canvas.height;
 
       if (vw === 0 || vh === 0) {
-        animationFrameId = requestAnimationFrame(renderPreview);
         return;
       }
 
       const ctx = canvas.getContext('2d');
       if (!ctx) {
-        animationFrameId = requestAnimationFrame(renderPreview);
         return;
       }
 
@@ -209,14 +209,12 @@ export const VideoProcessingProvider: React.FC<{ children: React.ReactNode }> = 
         syncCheckpoints: ttsPipeline.syncCheckpoints,
         videoPlaybackRate: videoState.videoPlaybackRate
       });
-
-      animationFrameId = requestAnimationFrame(renderPreview);
     };
 
-    animationFrameId = requestAnimationFrame(renderPreview);
+    const stopRenderLoop = createThrottledRenderLoop(canvas, video, renderPreview, 30);
 
     return () => {
-      cancelAnimationFrame(animationFrameId);
+      stopRenderLoop();
       fullscreenEvents.forEach(evt => document.removeEventListener(evt, handleResizeAndFullscreen));
       window.removeEventListener('resize', handleResizeAndFullscreen);
       if (resizeObserver) resizeObserver.disconnect();
@@ -254,6 +252,7 @@ export const VideoProcessingProvider: React.FC<{ children: React.ReactNode }> = 
     <VideoProcessingContext.Provider
       value={{
         ...videoState,
+        videoDuration: videoState.duration,
         ...ttsPipeline,
         ...blurDetection,
         showPythonModal,
