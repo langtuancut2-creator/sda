@@ -24,7 +24,10 @@ export const VideoExportModal: React.FC<VideoExportModalProps> = ({ isOpen, onCl
     dubAudioPositions,
     videoPlaybackRate,
     isDubbingActive,
-    audioCurrentTime
+    audioCurrentTime,
+    videoFile,
+    subtitleFile,
+    logoFile
   } = useVideoProcessing();
 
   const {
@@ -76,11 +79,101 @@ export const VideoExportModal: React.FC<VideoExportModalProps> = ({ isOpen, onCl
   };
 
   const estSizeMB = Math.round((videoDuration / 60) * exportPreset.estSizeMBPerMin) || 15;
-  const handleStartExport = async () => {
+  
+  const handleExportServerSide = async (vFile: File | null, sFile: File | null, fontFile: File | null, lFile: File | null, expSettings: any) => {
+    if (!vFile) {
+      alert('Vui lòng chọn video trước khi xuất');
+      return;
+    }
+
+    const form = new FormData();
+    form.append('video', vFile, vFile.name);
+    if (sFile) form.append('subtitle', sFile, sFile.name);
+    if (fontFile) form.append('font', fontFile, fontFile.name);
+    if (lFile) form.append('logo', lFile, lFile.name);
+    form.append('settings', JSON.stringify(expSettings || {}));
+
+    return new Promise<void>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', (process.env.REACT_APP_EXPORT_SERVER_URL || 'http://localhost:4000') + '/api/video/export', true);
+      xhr.responseType = 'blob';
+
+      xhr.upload.onprogress = (ev) => {
+        if (ev.lengthComputable) {
+          const percent = Math.round((ev.loaded / ev.total) * 100);
+          setExportProgress({
+            status: 'rendering',
+            progress: percent,
+            message: `Đang tải dữ liệu lên server xử lý ffmpeg (${percent}%)...`
+          });
+        }
+      };
+
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          const blob = xhr.response;
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = 'exported-capcut.mp4';
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          // Keep URL valid if we want to show download button
+          setDownloadUrl(url);
+          resolve();
+        } else {
+          const reader = new FileReader();
+          reader.onload = () => {
+            try {
+              const txt = reader.result as string;
+              const json = JSON.parse(txt);
+              console.error('Server export failed:', json);
+            } catch(e) {}
+          };
+          reader.readAsText(xhr.response);
+          reject(new Error('Export failed: ' + xhr.status));
+        }
+      };
+
+      xhr.onerror = () => {
+        reject(new Error('Network error during export'));
+      };
+
+      xhr.send(form);
+    });
+  };
+
+const handleStartExport = async () => {
     if (!videoEl || videoDuration < 1) return;
 
     cancelRef.current = false;
     setIsExporting(true);
+    setDownloadUrl(null);
+
+    // TRY SERVER-SIDE EXPORT FIRST
+    try {
+      const expSettings = {
+        preset: 'fast',
+        crf: '23',
+        fontName: 'Bangers',
+        fontSize: settings.fontSize || 36,
+        logoPos: { x: settings.textX || 10, y: settings.textY || 10 }
+      };
+      await handleExportServerSide(videoFile, subtitleFile, null, logoFile, expSettings); // Pass fontFile if you have it in context
+      
+      setExportProgress({
+        status: 'completed',
+        progress: 100,
+        message: 'Xuất video thành công qua máy chủ!'
+      });
+      setIsExporting(false);
+      return;
+    } catch (err) {
+      console.warn('Server export failed, falling back to client canvas exporter:', err);
+    }
+    
+    
     setDownloadUrl(null);
     setExportProgress({
       status: 'preparing',
