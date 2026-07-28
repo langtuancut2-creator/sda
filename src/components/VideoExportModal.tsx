@@ -122,12 +122,12 @@ export const VideoExportModal: React.FC<VideoExportModalProps> = ({ isOpen, onCl
       // Step 1: Frame extraction
       const { width, height, fps, videoBitrate, audioBitrate, resolution } = selectedPreset;
 
-      async function ensureAssetsReady(fontSpec = `bold ${fontSize}px "Bangers"`) {
-        await ensureFontLoaded(fontSpec);
+      async function ensureAssetsReady() {
+        await (document.fonts?.load?.(`bold ${fontSize}px "Bangers"`) ?? Promise.resolve());
         if (logoImg && !logoImg.complete) {
-          await new Promise((resolve) => {
-            logoImg.onload = () => resolve(null);
-            logoImg.onerror = () => resolve(null);
+          await new Promise((r) => {
+            logoImg.onload = r;
+            logoImg.onerror = r;
           });
         }
       }

@@ -4,7 +4,8 @@ import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
 import { spawn } from "child_process";
-import { writeFileSync, readFileSync, mkdirSync, rmSync, createReadStream, renameSync, existsSync } from "fs";
+import os from "os";
+import { writeFileSync, readFileSync, mkdirSync, rmSync, createReadStream, renameSync, existsSync, mkdtempSync } from "fs";
 import { randomBytes } from "crypto";
 import multer from "multer";
 
@@ -565,10 +566,19 @@ Ensure 'y' is strictly within 80 to 95 percentage range.`;
   });
 
   // OPTIMIZATION #6: Video Export with FFmpeg (Supports Multipart Form Data Blobs & Base64 Fallback)
-  const upload = multer({ dest: '/tmp/upload_frames' });
+  const upload = multer({ 
+    dest: path.join(os.tmpdir(), 'upload_frames'),
+    limits: { fileSize: 50 * 1024 * 1024 } // 50MB per file frame limit
+  });
+
+  const MAX_ALLOWED_FRAMES = 8000; // Limit max frames to prevent resource exhaustion
 
   app.post('/api/video/export', upload.any(), async (req, res) => {
-    try {
+    const isMultipart = req.is('multipart/form-data') || (req.files && Array.isArray(req.files) && req.files.length > 0);
+
+    if (isMultipart) {
+      console.log('📹 [Video Export] Request received via multipart/form-data stream.');
+      
       let settings: any = {};
       if (typeof req.body?.settings === 'string') {
         try { settings = JSON.parse(req.body.settings); } catch (e) {}
@@ -576,145 +586,76 @@ Ensure 'y' is strictly within 80 to 95 percentage range.`;
         settings = req.body.settings;
       }
 
-      const isMultipart = req.files && Array.isArray(req.files) && req.files.length > 0;
+      // Sanitize settings to prevent command injection
+      const allowedQualities = ['fast', 'balanced', 'high', 'highest'];
+      const quality = allowedQualities.includes(settings.quality) ? settings.quality : 'balanced';
+      const fps = Math.min(60, Math.max(1, Number(settings.fps) || 30));
+      const preset = getFFmpegPreset(quality);
+      const crf = getFFmpegCRF(quality);
+      const videoBitrate = /^\d+k$/.test(settings.videoBitrate) ? settings.videoBitrate : '10000k';
+      const audioBitrate = /^\d+k$/.test(settings.audioBitrate) ? settings.audioBitrate : '192k';
 
-      if (isMultipart) {
-        const tempDir = `/tmp/export_${randomBytes(8).toString('hex')}`;
-        mkdirSync(tempDir, { recursive: true });
+      const filesArr = (req.files as Express.Multer.File[]) || [];
+      const frameFiles = filesArr
+        .filter(f => f.fieldname === 'frames[]' || f.fieldname === 'frames' || f.originalname.startsWith('frame_'))
+        .sort((a, b) => a.originalname.localeCompare(b.originalname));
 
-        try {
-          const filesArr = req.files as Express.Multer.File[];
-          const frameFiles = filesArr
-            .filter(f => f.fieldname === 'frames[]' || f.fieldname === 'frames' || f.originalname.startsWith('frame_'))
-            .sort((a, b) => a.originalname.localeCompare(b.originalname));
+      if (frameFiles.length === 0) {
+        console.warn('⚠️ [Video Export] No frames found in multipart request.');
+        return res.status(400).json({ error: 'No frames uploaded' });
+      }
 
-          let frameCount = 0;
-          for (const file of frameFiles) {
-            const ext = path.extname(file.originalname) || '.jpg';
-            const targetPath = `${tempDir}/frame_${String(frameCount).padStart(6, '0')}${ext}`;
-            try {
-              renameSync(file.path, targetPath);
-            } catch (e) {
-              writeFileSync(targetPath, readFileSync(file.path));
-              rmSync(file.path, { force: true });
-            }
-            frameCount++;
-          }
-
-          const audioFile = filesArr.find(f => f.fieldname === 'audio');
-          let audioPath = '';
-          if (audioFile) {
-            audioPath = `${tempDir}/audio.wav`;
-            try {
-              renameSync(audioFile.path, audioPath);
-            } catch (e) {
-              writeFileSync(audioPath, readFileSync(audioFile.path));
-              rmSync(audioFile.path, { force: true });
-            }
-          }
-
-          // Cleanup any other leftover uploaded files
-          for (const f of filesArr) {
-            try {
-              if (existsSync(f.path)) rmSync(f.path, { force: true });
-            } catch (e) {}
-          }
-
-          const fps = settings.fps || 30;
-          const preset = getFFmpegPreset(settings.quality);
-          const crf = getFFmpegCRF(settings.quality);
-          const videoBitrate = settings.videoBitrate || '10000k';
-          const audioBitrate = settings.audioBitrate || '192k';
-
-          const frameExt = frameFiles.length > 0 && path.extname(frameFiles[0].originalname) ? path.extname(frameFiles[0].originalname) : '.jpg';
-
-          const ffmpegCmd = [
-            '-framerate', String(fps),
-            '-i', `${tempDir}/frame_%06d${frameExt}`
-          ];
-
-          if (audioPath) {
-            ffmpegCmd.push('-i', audioPath);
-          }
-
-          ffmpegCmd.push(
-            '-c:v', 'libx264',
-            '-preset', preset,
-            '-crf', String(crf),
-            '-b:v', videoBitrate
-          );
-
-          if (audioPath) {
-            ffmpegCmd.push('-c:a', 'aac', '-b:a', audioBitrate);
-          }
-
-          ffmpegCmd.push(
-            '-pix_fmt', 'yuv420p',
-            '-movflags', '+faststart',
-            '-y',
-            `${tempDir}/output.mp4`
-          );
-
-          await executeFFmpeg(ffmpegCmd);
-
-          const outputPath = `${tempDir}/output.mp4`;
-          const fileBuffer = readFileSync(outputPath);
-
-          res.setHeader('Content-Type', 'video/mp4');
-          res.setHeader('Content-Length', fileBuffer.length);
-          res.setHeader('Content-Disposition', 'attachment; filename="video.mp4"');
-          res.send(fileBuffer);
-
-          rmSync(tempDir, { recursive: true, force: true });
-          console.log('✅ Video export (multipart Blobs) completed and cleaned up');
-          return;
-        } catch (err) {
-          rmSync(tempDir, { recursive: true, force: true });
-          throw err;
+      if (frameFiles.length > MAX_ALLOWED_FRAMES) {
+        console.warn(`⚠️ [Video Export] Frame count ${frameFiles.length} exceeds max limit of ${MAX_ALLOWED_FRAMES}.`);
+        // Clean up uploaded files
+        for (const f of filesArr) {
+          if (existsSync(f.path)) rmSync(f.path, { force: true });
         }
+        return res.status(413).json({ error: `Frame count exceeds maximum limit of ${MAX_ALLOWED_FRAMES} frames.` });
       }
 
-      // Fallback: Base64 JSON payload
-      const { frameDataUrl, audioBlob } = req.body;
-
-      if (!frameDataUrl || !settings) {
-        return res.status(400).json({ error: 'Missing export data' });
-      }
-
-      // Generate temp directory
-      const tempDir = `/tmp/export_${randomBytes(8).toString('hex')}`;
-      mkdirSync(tempDir, { recursive: true });
+      const tempDir = mkdtempSync(path.join(os.tmpdir(), 'export_'));
 
       try {
-        // 1. Decode and save frames
-        const framesStr = Buffer.from(frameDataUrl, 'base64').toString('utf-8');
-        const frames = JSON.parse(framesStr);
         let frameCount = 0;
-        for (const frameBase64 of frames) {
-          const base64Data = frameBase64.replace(/^data:image\/\w+;base64,/, '');
-          const buffer = Buffer.from(base64Data, 'base64');
-          writeFileSync(`${tempDir}/frame_${String(frameCount).padStart(6, '0')}.png`, buffer);
+        for (const file of frameFiles) {
+          const rawExt = path.extname(file.originalname).toLowerCase();
+          const ext = ['.jpg', '.jpeg', '.png'].includes(rawExt) ? rawExt : '.jpg';
+          const targetPath = path.join(tempDir, `frame_${String(frameCount).padStart(6, '0')}${ext}`);
+          try {
+            renameSync(file.path, targetPath);
+          } catch (e) {
+            writeFileSync(targetPath, readFileSync(file.path));
+            rmSync(file.path, { force: true });
+          }
           frameCount++;
         }
 
-        // 2. Decode and save audio if present
+        const audioFile = filesArr.find(f => f.fieldname === 'audio');
         let audioPath = '';
-        if (audioBlob) {
-          const audioBuffer = Buffer.from(audioBlob, 'base64');
-          audioPath = `${tempDir}/audio.wav`;
-          writeFileSync(audioPath, audioBuffer);
+        if (audioFile) {
+          audioPath = path.join(tempDir, 'audio.wav');
+          try {
+            renameSync(audioFile.path, audioPath);
+          } catch (e) {
+            writeFileSync(audioPath, readFileSync(audioFile.path));
+            rmSync(audioFile.path, { force: true });
+          }
         }
 
-        // 3. Build FFmpeg command
-        const fps = settings.fps || 30;
-        const preset = getFFmpegPreset(settings.quality);
-        const crf = getFFmpegCRF(settings.quality);
-        const videoBitrate = settings.videoBitrate || '10000k';
-        const audioBitrate = settings.audioBitrate || '192k';
+        // Clean up remaining unhandled files in uploads
+        for (const f of filesArr) {
+          try {
+            if (existsSync(f.path)) rmSync(f.path, { force: true });
+          } catch (e) {}
+        }
+
+        const firstExt = path.extname(frameFiles[0].originalname).toLowerCase();
+        const frameExt = ['.jpg', '.jpeg', '.png'].includes(firstExt) ? firstExt : '.jpg';
 
         const ffmpegCmd = [
           '-framerate', String(fps),
-          '-i', `${tempDir}/frame_%06d.png`
+          '-i', path.join(tempDir, `frame_%06d${frameExt}`)
         ];
 
         if (audioPath) {
@@ -732,32 +673,121 @@ Ensure 'y' is strictly within 80 to 95 percentage range.`;
           ffmpegCmd.push('-c:a', 'aac', '-b:a', audioBitrate);
         }
 
+        const outputPath = path.join(tempDir, 'output.mp4');
         ffmpegCmd.push(
           '-pix_fmt', 'yuv420p',
           '-movflags', '+faststart',
           '-y',
-          `${tempDir}/output.mp4`
+          outputPath
+        );
+
+        await executeFFmpeg(ffmpegCmd);
+
+        const fileBuffer = readFileSync(outputPath);
+        res.setHeader('Content-Type', 'video/mp4');
+        res.setHeader('Content-Length', fileBuffer.length);
+        res.setHeader('Content-Disposition', 'attachment; filename="video.mp4"');
+        res.send(fileBuffer);
+
+        console.log('✅ Video export (multipart Blobs) completed successfully.');
+      } catch (err: any) {
+        console.error('❌ Multipart FFmpeg Export Error:', err);
+        return res.status(500).json({
+          status: 'error',
+          message: 'Export failed: ' + (err.message || 'FFmpeg process error')
+        });
+      } finally {
+        rmSync(tempDir, { recursive: true, force: true });
+      }
+      return;
+    }
+
+    // Fallback: Base64 JSON payload
+    console.log('📹 [Video Export] Request received via base64 JSON payload fallback.');
+    try {
+      let settings: any = {};
+      if (typeof req.body?.settings === 'string') {
+        try { settings = JSON.parse(req.body.settings); } catch (e) {}
+      } else if (req.body?.settings) {
+        settings = req.body.settings;
+      }
+
+      const { frameDataUrl, audioBlob } = req.body;
+
+      if (!frameDataUrl || !settings) {
+        return res.status(400).json({ error: 'Missing export data' });
+      }
+
+      const tempDir = mkdtempSync(path.join(os.tmpdir(), 'export_'));
+
+      try {
+        // 1. Decode and save frames
+        const framesStr = Buffer.from(frameDataUrl, 'base64').toString('utf-8');
+        const frames = JSON.parse(framesStr);
+        let frameCount = 0;
+        for (const frameBase64 of frames) {
+          const base64Data = frameBase64.replace(/^data:image\/\w+;base64,/, '');
+          const buffer = Buffer.from(base64Data, 'base64');
+          writeFileSync(path.join(tempDir, `frame_${String(frameCount).padStart(6, '0')}.png`), buffer);
+          frameCount++;
+        }
+
+        // 2. Decode and save audio if present
+        let audioPath = '';
+        if (audioBlob) {
+          const audioBuffer = Buffer.from(audioBlob, 'base64');
+          audioPath = path.join(tempDir, 'audio.wav');
+          writeFileSync(audioPath, audioBuffer);
+        }
+
+        // 3. Build FFmpeg command
+        const fps = Math.min(60, Math.max(1, Number(settings.fps) || 30));
+        const preset = getFFmpegPreset(settings.quality);
+        const crf = getFFmpegCRF(settings.quality);
+        const videoBitrate = settings.videoBitrate || '10000k';
+        const audioBitrate = settings.audioBitrate || '192k';
+
+        const ffmpegCmd = [
+          '-framerate', String(fps),
+          '-i', path.join(tempDir, 'frame_%06d.png')
+        ];
+
+        if (audioPath) {
+          ffmpegCmd.push('-i', audioPath);
+        }
+
+        ffmpegCmd.push(
+          '-c:v', 'libx264',
+          '-preset', preset,
+          '-crf', String(crf),
+          '-b:v', videoBitrate
+        );
+
+        if (audioPath) {
+          ffmpegCmd.push('-c:a', 'aac', '-b:a', audioBitrate);
+        }
+
+        const outputPath = path.join(tempDir, 'output.mp4');
+        ffmpegCmd.push(
+          '-pix_fmt', 'yuv420p',
+          '-movflags', '+faststart',
+          '-y',
+          outputPath
         );
 
         // 4. Execute FFmpeg
         await executeFFmpeg(ffmpegCmd);
 
         // 5. Stream output to client
-        const outputPath = `${tempDir}/output.mp4`;
         const fileBuffer = readFileSync(outputPath);
-
         res.setHeader('Content-Type', 'video/mp4');
         res.setHeader('Content-Length', fileBuffer.length);
         res.setHeader('Content-Disposition', 'attachment; filename="video.mp4"');
         res.send(fileBuffer);
 
-        // Cleanup
+        console.log('✅ Video export (base64 JSON fallback) completed successfully.');
+      } finally {
         rmSync(tempDir, { recursive: true, force: true });
-        console.log('✅ Video export (base64 JSON fallback) completed and cleaned up');
-
-      } catch (err) {
-        rmSync(tempDir, { recursive: true, force: true });
-        throw err;
       }
 
     } catch (err: any) {
