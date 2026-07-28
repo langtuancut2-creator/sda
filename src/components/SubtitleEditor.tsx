@@ -15,33 +15,31 @@ export const SubtitleEditor: React.FC = () => {
   return (
     <div className="flex flex-col gap-4 bg-zinc-900/60 border border-zinc-800 rounded-xl p-5 shadow-xl">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pb-3 border-b border-zinc-800">
-        <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex items-center gap-2">
           <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
           <h2 className="text-emerald-400 text-sm font-bold uppercase tracking-wider flex items-center gap-2">
             3. Lồng Tiếng AI CapCut & Phụ Đề
           </h2>
         </div>
 
-        <div className="flex items-center gap-2">
-          <button
-            onClick={generateAudioTimeline}
-            disabled={isGeneratingAudioTimeline || subtitles.length === 0}
-            className="px-3.5 py-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded-lg text-xs font-semibold flex items-center gap-2 transition-colors disabled:opacity-50 shadow-sm"
-            title="Xuất file âm thanh timeline hoàn chỉnh khớp thời gian phụ đề"
-          >
-            {isGeneratingAudioTimeline ? (
-              <>
-                <Loader2 size={14} className="animate-spin" />
-                <span>{audioTimelineProgress || "Đang tổng hợp..."}</span>
-              </>
-            ) : (
-              <>
-                <Download size={14} />
-                <span>Tạo & Xuất MP3 Khớp Video ({subtitles.length} câu)</span>
-              </>
-            )}
-          </button>
-        </div>
+        <button
+          onClick={generateAudioTimeline}
+          disabled={isGeneratingAudioTimeline || subtitles.length === 0}
+          className="px-3.5 py-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded-lg text-xs font-semibold flex items-center gap-2 transition-colors disabled:opacity-50 shadow-sm"
+          title="Xuất file âm thanh timeline hoàn chỉnh khớp thời gian phụ đề"
+        >
+          {isGeneratingAudioTimeline ? (
+            <>
+              <Loader2 size={14} className="animate-spin" />
+              <span>{audioTimelineProgress || "Đang tổng hợp..."}</span>
+            </>
+          ) : (
+            <>
+              <Download size={14} />
+              <span>Tạo & Xuất MP3 Khớp Video ({subtitles.length} câu)</span>
+            </>
+          )}
+        </button>
       </div>
 
       {/* SRT Subtitle List */}

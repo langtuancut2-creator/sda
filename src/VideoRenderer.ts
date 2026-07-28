@@ -49,11 +49,21 @@ class FrameRenderCache {
     subtitleText: string | null,
     logoX: number,
     logoY: number,
-    logoScale: number
+    logoScale: number,
+    fontSize: number = 0,
+    strokeWidth: number = 0,
+    textX: number = 0,
+    textY: number = 0,
+    isTextAutoCentered: boolean = true,
+    showBgBar: boolean = false,
+    bx: number = 0,
+    by: number = 0,
+    bw: number = 0,
+    bh: number = 0
   ): string {
     // Round time to nearest frame boundary (30fps = 33.33ms)
     const frameTime = Math.round(currentTime * 30) / 30;
-    return `${frameTime}_${zoomLevel}_${isMirrored}_${blurIntensity}_${subtitleText}_${logoX}_${logoY}_${logoScale}`;
+    return `${frameTime}_${zoomLevel}_${isMirrored}_${blurIntensity}_${subtitleText}_${logoX}_${logoY}_${logoScale}_${fontSize}_${strokeWidth}_${textX}_${textY}_${isTextAutoCentered}_${showBgBar}_${bx}_${by}_${bw}_${bh}`;
   }
 
   get(key: string): CanvasImageSource | null {
@@ -96,7 +106,7 @@ function getBlurBuffer(w: number, h: number) {
       offscreenBlurCanvas.width = w;
       offscreenBlurCanvas.height = h;
     }
-    offscreenBlurCtx = offscreenBlurCanvas.getContext('2d', { alpha: false });
+    offscreenBlurCtx = offscreenBlurCanvas.getContext('2d', { alpha: false }) as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null;
   } else {
     if (offscreenBlurCanvas.width !== w || offscreenBlurCanvas.height !== h) {
       offscreenBlurCanvas.width = w;
@@ -167,10 +177,10 @@ function applyOptimizedBlur(
     }
     bCtx.restore();
 
-    const smallBlurPx = Math.max(1, Math.round(blurIntensity * scaleFactor * scale * 0.75));
+    const smallBlurPx = Math.max(1, Math.round(blurIntensity * scaleFactor * scale * 1.0));
 
     ctx.save();
-    ctx.filter = `blur(${Math.min(smallBlurPx, 12)}px)`;
+    ctx.filter = `blur(${Math.min(smallBlurPx, 16)}px)`;
     ctx.drawImage(bCanvas as CanvasImageSource, 0, 0, smallW, smallH, 0, 0, videoWidth, videoHeight);
     ctx.restore();
   }
@@ -289,7 +299,17 @@ export function drawGraphicsFrame(params: GraphicsFrameParams): void {
     activeSubtitleText,
     logoX,
     logoY,
-    logoScale
+    logoScale,
+    fontSize,
+    strokeWidth,
+    textX,
+    textY,
+    isTextAutoCentered,
+    showBgBar,
+    blurBox.x,
+    blurBox.y,
+    blurBox.w,
+    blurBox.h
   );
 
   if (isPaused && frameCache.getLastKey() === cacheKey) {
@@ -416,6 +436,7 @@ function drawOptimizedSubtitle(
     ctx.fillRect(tx - barWidth / 2, ty - barHeight / 2, barWidth, barHeight);
   }
 
+  ctx.font = `bold ${canvasFontSize}px "Bangers", cursive, sans-serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.lineJoin = 'round';

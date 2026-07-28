@@ -52,7 +52,7 @@ const SettingsContext = createContext<SettingsContextType | null>(null);
 
 export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [activePanel, setActivePanel] = useState<ActivePanel>(null);
-  const [blurIntensity, setBlurIntensity] = useState(15);
+  const [blurIntensity, setBlurIntensity] = useState(20);
   const [blurBox, setBlurBox] = useState<BlurBox>({ x: 0, y: 83, w: 100, h: 14 });
   const [fontSize, setFontSize] = useState(36);
   const [strokeWidth, setStrokeWidth] = useState(25);
