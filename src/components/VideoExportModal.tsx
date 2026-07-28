@@ -1,6 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { X, Film, Download, AlertTriangle, Loader2, CheckCircle2, Sparkles } from 'lucide-react';
 import { useVideoProcessing } from '../contexts/VideoProcessingContext';
+import { useSettings } from '../contexts/SettingsContext';
 import { ExportSettings, ExportProgress } from '../types/VideoExport';
 import { useFrameExtraction } from '../hooks/useFrameExtraction';
 import { useAudioExportSync } from '../hooks/useAudioExportSync';
@@ -12,30 +13,34 @@ interface VideoExportModalProps {
 }
 
 export const VideoExportModal: React.FC<VideoExportModalProps> = ({ isOpen, onClose }) => {
+  const settings = useSettings();
   const {
     videoElementRef,
     videoDuration: rawVideoDuration,
-    zoomLevel,
-    isMirrored,
-    blurIntensity,
     blurBox,
-    showBgBar,
     logoImg,
-    logoX,
-    logoY,
-    logoScale,
     subtitles,
-    isTextAutoCentered,
-    textX,
-    textY,
-    fontSize,
-    strokeWidth,
     syncCheckpoints,
     dubAudioPositions,
     videoPlaybackRate,
     isDubbingActive,
     audioCurrentTime
   } = useVideoProcessing();
+
+  const {
+    zoomLevel,
+    isMirrored,
+    blurIntensity,
+    showBgBar,
+    logoX,
+    logoY,
+    logoScale,
+    isTextAutoCentered,
+    textX,
+    textY,
+    fontSize,
+    strokeWidth
+  } = settings;
 
   const { extractFrames } = useFrameExtraction();
   const { calculateAudioFrameMapping, audioBufferToWavBlob } = useAudioExportSync();
@@ -57,55 +62,20 @@ export const VideoExportModal: React.FC<VideoExportModalProps> = ({ isOpen, onCl
   const videoDuration = rawVideoDuration || videoEl?.duration || 0;
   const isVideoValid = !!videoEl && videoDuration >= 1;
 
-  const presets: Record<ExportSettings['quality'], { resolution: string; width: number; height: number; fps: 24 | 30; videoBitrate: string; audioBitrate: string; estSizeMBPerMin: number; label: string; desc: string }> = {
-    fast: {
-      label: 'Nhanh (Fast)',
-      desc: '720p, 24fps, Tối ưu tốc độ',
-      resolution: '720p',
-      width: 1280,
-      height: 720,
-      fps: 24,
-      videoBitrate: '5000k',
-      audioBitrate: '128k',
-      estSizeMBPerMin: 45
-    },
-    balanced: {
-      label: 'Cân bằng (Balanced)',
-      desc: '1080p, 30fps, Chuẩn TikTok / Reeling / CapCut',
-      resolution: '1080p',
-      width: 1920,
-      height: 1080,
-      fps: 30,
-      videoBitrate: '10000k',
-      audioBitrate: '192k',
-      estSizeMBPerMin: 75
-    },
-    high: {
-      label: 'Chất lượng cao (High Quality)',
-      desc: '1080p, 30fps, Sắc nét không vỡ nét',
-      resolution: '1080p',
-      width: 1920,
-      height: 1080,
-      fps: 30,
-      videoBitrate: '20000k',
-      audioBitrate: '256k',
-      estSizeMBPerMin: 150
-    },
-    highest: {
-      label: 'Tối đa (4K Ultra)',
-      desc: '4K (3840x2160), 30fps, Siêu phân giải',
-      resolution: '4K',
-      width: 3840,
-      height: 2160,
-      fps: 30,
-      videoBitrate: '40000k',
-      audioBitrate: '320k',
-      estSizeMBPerMin: 300
-    }
+  // Default high-performance 1080p 30fps preset
+  const exportPreset = {
+    resolution: '1080p' as const,
+    width: 1920,
+    height: 1080,
+    fps: 30 as const,
+    videoBitrate: '12000k',
+    audioBitrate: '192k',
+    estSizeMBPerMin: 80,
+    label: 'Xuất Video 1080p @ 30 FPS (Tốc độ cao nhất)',
+    desc: 'Tối ưu hóa mã hóa H.264/AAC với tốc độ xử lý nhanh nhất và chất lượng Full HD sắc nét'
   };
 
-  const selectedPreset = presets[quality];
-  const estSizeMB = Math.round((videoDuration / 60) * selectedPreset.estSizeMBPerMin) || 10;
+  const estSizeMB = Math.round((videoDuration / 60) * exportPreset.estSizeMBPerMin) || 15;
   const handleStartExport = async () => {
     if (!videoEl || videoDuration < 1) return;
 
@@ -115,15 +85,35 @@ export const VideoExportModal: React.FC<VideoExportModalProps> = ({ isOpen, onCl
     setExportProgress({
       status: 'preparing',
       progress: 5,
-      message: 'Đang chuẩn bị xuất video...'
+      message: 'Đang chuẩn bị xuất video 1080p 30fps...'
     });
 
     try {
-      // Step 1: Frame extraction
-      const { width, height, fps, videoBitrate, audioBitrate, resolution } = selectedPreset;
+      // Step 1: Frame extraction at 1080p 30fps
+      const fps = 30;
+      const { videoBitrate, audioBitrate } = exportPreset;
+
+      // Calculate 1080p dimensions preserving natural aspect ratio
+      const vWidth = videoEl.videoWidth || 1920;
+      const vHeight = videoEl.videoHeight || 1080;
+      let width = 1920;
+      let height = 1080;
+
+      if (vHeight > vWidth) {
+        // Portrait video (9:16)
+        width = 1080;
+        height = Math.round((vHeight / vWidth) * 1080);
+        if (height % 2 !== 0) height += 1;
+      } else {
+        // Landscape or Square video (16:9)
+        height = 1080;
+        width = Math.round((vWidth / vHeight) * 1080);
+        if (width % 2 !== 0) width += 1;
+      }
 
       async function ensureAssetsReady() {
-        await (document.fonts?.load?.(`bold ${fontSize}px "Bangers"`) ?? Promise.resolve());
+        const effFontSize = fontSize || 36;
+        await ensureFontLoaded(`bold ${effFontSize}px "Bangers"`);
         if (logoImg && !logoImg.complete) {
           await new Promise((r) => {
             logoImg.onload = r;
@@ -210,6 +200,7 @@ export const VideoExportModal: React.FC<VideoExportModalProps> = ({ isOpen, onCl
         form.append('frames[]', b, `frame_${String(i).padStart(6, '0')}.jpg`)
       );
       form.append('audio', audioWavBlob, 'audio.wav');
+      const resolution = '1080p';
       form.append(
         'settings',
         JSON.stringify({
@@ -322,7 +313,7 @@ export const VideoExportModal: React.FC<VideoExportModalProps> = ({ isOpen, onCl
                 Xuất Video Chuẩn CapCut Pro
                 <Sparkles className="w-4 h-4 text-amber-400" />
               </h3>
-              <p className="text-xs text-zinc-400">Dựng video H.264/AAC với phông chữ & mờ chuẩn 60fps/30fps</p>
+              <p className="text-xs text-zinc-400">Dựng video H.264/AAC với phông chữ & mờ chuẩn 1080p @ 30fps</p>
             </div>
           </div>
           <button
@@ -335,60 +326,49 @@ export const VideoExportModal: React.FC<VideoExportModalProps> = ({ isOpen, onCl
         </div>
 
         {/* Modal Body */}
-        <div className="p-6 space-y-6 overflow-y-auto max-h-[75vh]">
-          {/* Quality Presets */}
+        <div className="p-5 space-y-4 overflow-y-auto max-h-[72vh] [::-webkit-scrollbar]:w-1.5 [::-webkit-scrollbar-thumb]:bg-zinc-800 [::-webkit-scrollbar-thumb]:rounded-full">
+          {/* Single Standard Export Configuration */}
           <div>
-            <label className="text-xs font-semibold text-zinc-300 block mb-3 uppercase tracking-wider">
-              Cấu hình chất lượng xuất (Quality Preset)
+            <label className="text-[11px] font-bold text-zinc-400 block mb-2.5 uppercase tracking-wider">
+              Cấu hình xuất chuẩn duy nhất
             </label>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {(Object.keys(presets) as Array<ExportSettings['quality']>).map((key) => {
-                const item = presets[key];
-                const isSelected = quality === key;
-                return (
-                  <button
-                    key={key}
-                    type="button"
-                    disabled={isExporting}
-                    onClick={() => setQuality(key)}
-                    className={`p-3.5 text-left rounded-xl border transition-all ${
-                      isSelected
-                        ? 'bg-emerald-500/10 border-emerald-500 text-emerald-400 ring-1 ring-emerald-500/50'
-                        : 'bg-zinc-950 border-zinc-800 hover:border-zinc-700 text-zinc-300'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between font-bold text-sm">
-                      <span>{item.label}</span>
-                      <span className="text-xs font-mono text-zinc-400">{item.resolution}</span>
-                    </div>
-                    <p className="text-[11px] text-zinc-400 mt-1 leading-relaxed">{item.desc}</p>
-                  </button>
-                );
-              })}
+            <div className="p-4 rounded-xl border border-emerald-500 bg-emerald-500/10 ring-1 ring-emerald-500/40 text-emerald-300 relative shadow-md shadow-emerald-950/50">
+              <div className="flex items-center justify-between font-bold text-sm sm:text-base mb-1.5">
+                <span className="flex items-center gap-2 text-emerald-300">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  Xuất Video 1080p @ 30 FPS
+                </span>
+                <span className="text-xs font-mono font-semibold px-2.5 py-1 rounded-md border bg-emerald-500/20 text-emerald-300 border-emerald-500/40">
+                  Tốc độ cao nhất
+                </span>
+              </div>
+              <p className="text-xs text-zinc-300 leading-relaxed">
+                Tốc độ xử lý tối đa với độ phân giải chuẩn 1080p 30fps, định dạng MP4 H.264/AAC tương thích mọi nền tảng CapCut, TikTok, YouTube Shorts, Facebook Reels.
+              </p>
             </div>
           </div>
 
           {/* Export Specifications */}
-          <div className="bg-zinc-950 p-4 rounded-xl border border-zinc-800 grid grid-cols-3 gap-4 text-center">
+          <div className="bg-zinc-950 p-3.5 rounded-xl border border-zinc-800/80 grid grid-cols-3 gap-3 text-center">
             <div>
-              <span className="text-[11px] text-zinc-500 block uppercase">Độ phân giải</span>
-              <span className="text-sm font-bold text-zinc-200 font-mono">{selectedPreset.resolution}</span>
+              <span className="text-[10px] text-zinc-500 block uppercase font-medium">Độ phân giải</span>
+              <span className="text-xs sm:text-sm font-bold text-zinc-200 font-mono mt-0.5 block">{exportPreset.resolution}</span>
             </div>
             <div>
-              <span className="text-[11px] text-zinc-500 block uppercase">Tốc độ khung</span>
-              <span className="text-sm font-bold text-zinc-200 font-mono">{selectedPreset.fps} FPS</span>
+              <span className="text-[10px] text-zinc-500 block uppercase font-medium">Tốc độ khung</span>
+              <span className="text-xs sm:text-sm font-bold text-zinc-200 font-mono mt-0.5 block">{exportPreset.fps} FPS</span>
             </div>
             <div>
-              <span className="text-[11px] text-zinc-500 block uppercase">Dung lượng dự kiến</span>
-              <span className="text-sm font-bold text-emerald-400 font-mono">~{estSizeMB} MB</span>
+              <span className="text-[10px] text-zinc-500 block uppercase font-medium">Dung lượng dự kiến</span>
+              <span className="text-xs sm:text-sm font-bold text-emerald-400 font-mono mt-0.5 block">~{estSizeMB} MB</span>
             </div>
           </div>
 
           {/* Warnings */}
           {!isVideoValid && (
-            <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-xl flex items-center gap-3 text-amber-400 text-xs">
-              <AlertTriangle className="w-5 h-5 shrink-0" />
-              <span>Vui lòng tải video lên trước khi thực hiện xuất video (thời lượng tối thiểu 1s).</span>
+            <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-xl flex items-center gap-2.5 text-amber-400 text-xs">
+              <AlertTriangle className="w-4 h-4 shrink-0" />
+              <span className="leading-tight">Vui lòng tải video lên trước khi thực hiện xuất video (thời lượng tối thiểu 1s).</span>
             </div>
           )}
 

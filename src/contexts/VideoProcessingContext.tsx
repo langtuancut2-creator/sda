@@ -34,20 +34,30 @@ export const VideoProcessingProvider: React.FC<{ children: React.ReactNode }> = 
   const subtitlesRef = useRef(ttsPipeline.subtitles);
   useEffect(() => {
     subtitlesRef.current = ttsPipeline.subtitles;
-    if (videoState.previewCanvasRef.current && ttsPipeline.subtitles.length > 0) {
-      const ctx = videoState.previewCanvasRef.current.getContext('2d');
-      if (ctx) {
-        const videoHeight = videoState.videoElementRef.current?.videoHeight || 720;
-        const fontSizePercent = (settings.fontSize / 720) * 100;
-        const canvasFontSize = (fontSizePercent / 100) * videoHeight;
-        // Ensure font is loaded before measuring text to avoid layout shifts / reflow mismatch
-        ensureFontLoaded(`bold ${canvasFontSize}px "Bangers"`).then(() => {
-          precomputeSubtitleMetrics(ctx, ttsPipeline.subtitles, canvasFontSize);
-          precomputeSubtitleMetrics(ctx, ttsPipeline.subtitles, settings.fontSize);
-        });
-      }
-    }
-  }, [ttsPipeline.subtitles, settings.fontSize, videoState.previewCanvasRef, videoState.videoElementRef]);
+    
+    const subs = ttsPipeline.subtitles;
+    if (!subs || subs.length === 0) return;
+
+    // Debounce to prevent rapid recomputations during streaming/editing subtitles
+    const timer = setTimeout(() => {
+      const off = typeof OffscreenCanvas !== 'undefined'
+        ? new OffscreenCanvas(1, 1)
+        : document.createElement('canvas');
+      const ctx = off.getContext('2d') as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null;
+      if (!ctx) return;
+
+      const videoHeight = videoState.videoElementRef.current?.videoHeight || 720;
+      const fontSizePercent = (settings.fontSize / 720) * 100;
+      const canvasFontSize = (fontSizePercent / 100) * videoHeight;
+
+      ensureFontLoaded(`bold ${canvasFontSize}px "Bangers"`).then(() => {
+        precomputeSubtitleMetrics(ctx, subs, canvasFontSize);
+        precomputeSubtitleMetrics(ctx, subs, settings.fontSize);
+      });
+    }, 150);
+
+    return () => clearTimeout(timer);
+  }, [ttsPipeline.subtitles, settings.fontSize, videoState.videoElementRef]);
 
   const blurDetection = useBlurDetection(
     videoState.containerRef,

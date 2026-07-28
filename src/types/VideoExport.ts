@@ -1,7 +1,7 @@
 export interface ExportSettings {
   quality: 'fast' | 'balanced' | 'high' | 'highest';
-  fps: 30 | 24;
-  resolution: '720p' | '1080p' | '4K';
+  fps: 30;
+  resolution: '1080p';
   videoBitrate: string;
   audioBitrate: string;
 }

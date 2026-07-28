@@ -589,7 +589,7 @@ Ensure 'y' is strictly within 80 to 95 percentage range.`;
       // Sanitize settings to prevent command injection
       const allowedQualities = ['fast', 'balanced', 'high', 'highest'];
       const quality = allowedQualities.includes(settings.quality) ? settings.quality : 'balanced';
-      const fps = Math.min(60, Math.max(1, Number(settings.fps) || 30));
+      const fps = 30;
       const preset = getFFmpegPreset(quality);
       const crf = getFFmpegCRF(quality);
       const videoBitrate = /^\d+k$/.test(settings.videoBitrate) ? settings.videoBitrate : '10000k';
@@ -741,7 +741,7 @@ Ensure 'y' is strictly within 80 to 95 percentage range.`;
         }
 
         // 3. Build FFmpeg command
-        const fps = Math.min(60, Math.max(1, Number(settings.fps) || 30));
+        const fps = 30;
         const preset = getFFmpegPreset(settings.quality);
         const crf = getFFmpegCRF(settings.quality);
         const videoBitrate = settings.videoBitrate || '10000k';

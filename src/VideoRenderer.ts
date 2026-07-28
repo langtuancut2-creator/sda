@@ -400,6 +400,9 @@ let tempOffscreenCtx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext
 export async function ensureFontLoaded(fontSpec = `bold 24px "Bangers"`): Promise<void> {
   if (typeof document !== 'undefined' && document.fonts && document.fonts.load) {
     try {
+      if (!fontSpec || fontSpec.includes('undefined') || fontSpec.includes('NaN')) {
+        fontSpec = `bold 24px "Bangers"`;
+      }
       await document.fonts.load(fontSpec);
     } catch (e) {
       // fallback gracefully if font load fails or font is unavailable

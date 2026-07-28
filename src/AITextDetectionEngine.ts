@@ -52,7 +52,25 @@ export class AITextDetectionEngine {
       if (ctx) {
         ctx.drawImage(videoEl, 0, 0, vw, vh);
       }
-      const base64Image = AITextDetectionEngine.cachedGeminiCanvas.toDataURL('image/jpeg', 0.85);
+      // Use toBlob and FileReader for async non-blocking conversion
+      const blob = await new Promise<Blob | null>(res => {
+        if (AITextDetectionEngine.cachedGeminiCanvas) {
+          AITextDetectionEngine.cachedGeminiCanvas.toBlob(b => res(b), 'image/jpeg', 0.85);
+        } else {
+          res(null);
+        }
+      });
+
+      if (!blob) {
+        throw new Error('Failed to create image blob from canvas');
+      }
+
+      const base64Image = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
 
       const response = await fetch('/api/detect-subtitle', {
         method: 'POST',
