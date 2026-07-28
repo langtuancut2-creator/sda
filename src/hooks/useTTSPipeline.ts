@@ -12,15 +12,26 @@ const DEFAULT_SAMPLE_SUBS: SubtitleItem[] = [
 
 export const timeToSeconds = (timeString: string) => {
   if (!timeString) return 0;
-  const [hours, minutes, seconds] = timeString.split(':');
-  const [sec, ms] = seconds.split(',');
-  return parseInt(hours, 10) * 3600 + parseInt(minutes, 10) * 60 + parseInt(sec, 10) + parseInt(ms, 10) / 1000;
+  const parts = timeString.trim().replace(',', '.').split(':');
+  if (parts.length === 3) {
+    const hours = parseFloat(parts[0]) || 0;
+    const minutes = parseFloat(parts[1]) || 0;
+    const seconds = parseFloat(parts[2]) || 0;
+    return hours * 3600 + minutes * 60 + seconds;
+  } else if (parts.length === 2) {
+    const minutes = parseFloat(parts[0]) || 0;
+    const seconds = parseFloat(parts[1]) || 0;
+    return minutes * 60 + seconds;
+  }
+  return parseFloat(timeString) || 0;
 };
 
 export const parseSRT = (srtText: string): SubtitleItem[] => {
   const srtArray: SubtitleItem[] = [];
-  const blocks = srtText.trim().replace(/\r\n/g, '\n').split(/\n\s*\n/);
-  const timeRegex = /(\d{2}:\d{2}:\d{2},\d{3}) --> (\d{2}:\d{2}:\d{2},\d{3})/;
+  if (!srtText) return srtArray;
+
+  const blocks = srtText.trim().replace(/\r\n/g, '\n').replace(/\r/g, '\n').split(/\n\s*\n/);
+  const timeRegex = /((\d{1,2}:)?\d{1,2}:\d{2}[,.]\d{1,3})\s*-->\s*((\d{1,2}:)?\d{1,2}:\d{2}[,.]\d{1,3})/;
 
   blocks.forEach(block => {
     const lines = block.split('\n');
@@ -35,12 +46,16 @@ export const parseSRT = (srtText: string): SubtitleItem[] => {
       const match = lines[timeLineIdx].match(timeRegex);
       if (match) {
         const start = timeToSeconds(match[1]);
-        const end = timeToSeconds(match[2]);
-        const text = lines.slice(timeLineIdx + 1).join('\n');
-        srtArray.push({ start, end, text });
+        const end = timeToSeconds(match[3]);
+        const text = lines.slice(timeLineIdx + 1).join('\n').trim();
+        if (!isNaN(start) && !isNaN(end) && text.length > 0) {
+          srtArray.push({ start, end, text });
+        }
       }
     }
   });
+
+  srtArray.sort((a, b) => a.start - b.start);
   return srtArray;
 };
 

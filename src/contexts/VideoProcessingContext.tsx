@@ -118,8 +118,8 @@ export const VideoProcessingProvider: React.FC<{ children: React.ReactNode }> = 
         let targetH = nativeH;
 
         if (rect.width > 0 && rect.height > 0) {
-          targetW = Math.min(1920, Math.max(nativeW, Math.round(rect.width * dpr)));
-          targetH = Math.min(1080, Math.round(targetW * (nativeH / nativeW)));
+          targetW = Math.max(nativeW, Math.round(rect.width * dpr));
+          targetH = Math.round(targetW * (nativeH / nativeW));
         }
 
         if (c.width !== targetW || c.height !== targetH) {

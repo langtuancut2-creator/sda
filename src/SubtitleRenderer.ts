@@ -23,18 +23,19 @@ export interface BlurBoxState {
  * @param currentTime Thời gian hiện tại của video (tính bằng giây)
  * @returns Dòng phụ đề active hoặc null
  */
-// SYNC-FIX + PERF: RC#5 — Binary search for video-based subtitle lookup O(log N)
+// SYNC-FIX + PERF: Binary search for active subtitle lookup O(log N)
 export function getActiveSubtitle(subtitles: SubtitleItem[], currentTime: number): string | null {
   if (!subtitles || subtitles.length === 0) return null;
   let lo = 0, hi = subtitles.length - 1;
   while (lo <= hi) {
     const mid = (lo + hi) >> 1;
-    if (subtitles[mid].end < currentTime) {
-      lo = mid + 1;
-    } else if (subtitles[mid].start > currentTime) {
+    const sub = subtitles[mid];
+    if (currentTime < sub.start) {
       hi = mid - 1;
+    } else if (currentTime > sub.end) {
+      lo = mid + 1;
     } else {
-      return subtitles[mid].text;
+      return sub.text;
     }
   }
   return null;
@@ -47,7 +48,7 @@ export function getActiveSubtitle(subtitles: SubtitleItem[], currentTime: number
  * @param audioCurrentTime Thời gian hiện tại của audio lồng tiếng (tính bằng giây)
  * @returns Dòng phụ đề active hoặc null
  */
-// SYNC-FIX: RC#2 — Active subtitle lookup based on actual audio playback position
+// SYNC-FIX: Active subtitle lookup with exact audio duration cutoff
 export function getActiveSubtitleByAudioTime(
   subtitles: SubtitleItem[],
   finalAudioPositions: number[],
@@ -67,7 +68,28 @@ export function getActiveSubtitleByAudioTime(
     }
   }
   if (result === -1) return null;
-  return subtitles[result]?.text ?? null;
+
+  const startAudioTime = finalAudioPositions[result];
+  const sub = subtitles[result];
+  if (!sub) return null;
+
+  const rawDuration = sub.end - sub.start;
+  const expectedDuration = rawDuration > 0 ? rawDuration : 3.0;
+
+  let maxDuration = expectedDuration + 0.3;
+  if (result < finalAudioPositions.length - 1) {
+    const nextStart = finalAudioPositions[result + 1];
+    const gap = nextStart - startAudioTime;
+    if (gap > 0) {
+      maxDuration = Math.min(maxDuration, gap);
+    }
+  }
+
+  if (audioCurrentTime >= startAudioTime && audioCurrentTime <= startAudioTime + maxDuration) {
+    return sub.text;
+  }
+
+  return null;
 }
 
 /**

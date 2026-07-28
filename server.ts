@@ -3,6 +3,9 @@ import path from "path";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
+import { spawn } from "child_process";
+import { writeFileSync, readFileSync, mkdirSync, rmSync, createReadStream } from "fs";
+import { randomBytes } from "crypto";
 
 dotenv.config();
 
@@ -206,25 +209,53 @@ class MetricsLogger {
   }
 }
 
+async function fetchGoogleTranslateTTS(text: string): Promise<TtsResult> {
+  const formattedText = text.trim();
+  const lang = /[\u4e00-\u9fa5]/.test(formattedText) ? 'zh-CN' : 'vi';
+  const url = `https://translate.google.com/translate_tts?ie=UTF-8&tl=${lang}&client=tw-ob&q=${encodeURIComponent(formattedText)}`;
+  
+  const response = await fetch(url, {
+    headers: {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      "Referer": "https://translate.google.com/"
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error(`Google Translate TTS status: ${response.status}`);
+  }
+
+  const arrayBuffer = await response.arrayBuffer();
+  const audioBase64 = Buffer.from(arrayBuffer).toString("base64");
+  const duration = Math.max(800, Math.round((formattedText.length / 12) * 1000));
+
+  return {
+    audioBase64,
+    duration,
+    speaker: `google_${lang}`
+  };
+}
+
 /**
- * Gọi API CapCut / TikTok TTS với timeout 6000ms & retry tối đa 2 lần mỗi endpoint
- * OPTIMIZATION #2: Faster request with AbortController cleanup (Fix: RC#9)
+ * Gọi API CapCut / TikTok TTS với fallback sang Google Translate TTS
  */
 async function fetchCapCutTTS(
   text: string,
   voice: string = "BV074_streaming",
   sessionId: string = DEFAULT_SESSION_ID,
-  timeoutMs: number = 6000
+  timeoutMs: number = 4000
 ): Promise<TtsResult> {
   const formattedText = text.trim();
+  if (!formattedText) {
+    throw new Error("Empty text");
+  }
+
   const voiceCode = "BV074_streaming";
 
   const endpoints = [
     "https://api16-normal-v6.tiktokv.com/media/api/text/speech/invoke/",
     "https://api22-normal-c-useast1a.tiktokv.com/media/api/text/speech/invoke/"
   ];
-
-  let lastError: any = null;
 
   for (const endpoint of endpoints) {
     for (let attempt = 1; attempt <= 2; attempt++) {
@@ -259,21 +290,51 @@ async function fetchCapCutTTS(
         }
       } catch (err: any) {
         if (timer) clearTimeout(timer);
-        lastError = err;
       } finally {
-        controller.abort(); // Ensure cleanup
+        controller.abort();
       }
     }
   }
 
-  throw new Error(lastError?.message || "Không thể tổng hợp giọng đọc từ CapCut TTS API");
+  // Fallback 1: Google Translate TTS API
+  try {
+    console.log(`⚠️ CapCut TTS failed, using Google Translate TTS fallback for: "${formattedText.substring(0, 20)}..."`);
+    return await fetchGoogleTranslateTTS(formattedText);
+  } catch (err: any) {
+    console.warn("Google Translate TTS fallback failed, generating silent buffer fallback", err);
+  }
+
+  // Fallback 2: Generate 1s silent WAV buffer so TTS process never crashes
+  const sampleRate = 22050;
+  const numSamples = sampleRate * 1; // 1 second
+  const wavHeader = Buffer.alloc(44);
+  wavHeader.write('RIFF', 0);
+  wavHeader.writeUInt32LE(36 + numSamples * 2, 4);
+  wavHeader.write('WAVE', 8);
+  wavHeader.write('fmt ', 12);
+  wavHeader.writeUInt32LE(16, 16);
+  wavHeader.writeUInt16LE(1, 20); // PCM
+  wavHeader.writeUInt16LE(1, 22); // mono
+  wavHeader.writeUInt32LE(sampleRate, 24);
+  wavHeader.writeUInt32LE(sampleRate * 2, 28);
+  wavHeader.writeUInt16LE(2, 32);
+  wavHeader.writeUInt16LE(16, 34);
+  wavHeader.write('data', 36);
+  wavHeader.writeUInt32LE(numSamples * 2, 40);
+
+  const silentBuffer = Buffer.concat([wavHeader, Buffer.alloc(numSamples * 2)]);
+  return {
+    audioBase64: silentBuffer.toString('base64'),
+    duration: 1000,
+    speaker: 'silent_fallback'
+  };
 }
 
 async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  app.use(express.json({ limit: "10mb" }));
+  app.use(express.json({ limit: "500mb" }));
 
   // Initialize Cache, Resilience & Metrics
   const ttsCache = new LRUCache(MAX_CACHE_SIZE, MAX_CACHE_DURATION);
@@ -502,6 +563,103 @@ Ensure 'y' is strictly within 80 to 95 percentage range.`;
     }
   });
 
+  // OPTIMIZATION #6: Video Export with FFmpeg
+  app.post('/api/video/export', async (req, res) => {
+    try {
+      const { frameDataUrl, audioBlob, settings } = req.body;
+
+      if (!frameDataUrl || !settings) {
+        return res.status(400).json({ error: 'Missing export data' });
+      }
+
+      // Generate temp directory
+      const tempDir = `/tmp/export_${randomBytes(8).toString('hex')}`;
+      mkdirSync(tempDir, { recursive: true });
+
+      try {
+        // 1. Decode and save frames
+        const framesStr = Buffer.from(frameDataUrl, 'base64').toString('utf-8');
+        const frames = JSON.parse(framesStr);
+        let frameCount = 0;
+        for (const frameBase64 of frames) {
+          const base64Data = frameBase64.replace(/^data:image\/\w+;base64,/, '');
+          const buffer = Buffer.from(base64Data, 'base64');
+          writeFileSync(`${tempDir}/frame_${String(frameCount).padStart(6, '0')}.png`, buffer);
+          frameCount++;
+        }
+
+        // 2. Decode and save audio if present
+        let audioPath = '';
+        if (audioBlob) {
+          const audioBuffer = Buffer.from(audioBlob, 'base64');
+          audioPath = `${tempDir}/audio.wav`;
+          writeFileSync(audioPath, audioBuffer);
+        }
+
+        // 3. Build FFmpeg command
+        const fps = settings.fps || 30;
+        const preset = getFFmpegPreset(settings.quality);
+        const crf = getFFmpegCRF(settings.quality);
+        const videoBitrate = settings.videoBitrate || '10000k';
+        const audioBitrate = settings.audioBitrate || '192k';
+
+        const ffmpegCmd = [
+          '-framerate', String(fps),
+          '-i', `${tempDir}/frame_%06d.png`
+        ];
+
+        if (audioPath) {
+          ffmpegCmd.push('-i', audioPath);
+        }
+
+        ffmpegCmd.push(
+          '-c:v', 'libx264',
+          '-preset', preset,
+          '-crf', String(crf),
+          '-b:v', videoBitrate
+        );
+
+        if (audioPath) {
+          ffmpegCmd.push('-c:a', 'aac', '-b:a', audioBitrate);
+        }
+
+        ffmpegCmd.push(
+          '-pix_fmt', 'yuv420p',
+          '-movflags', '+faststart',
+          '-y',
+          `${tempDir}/output.mp4`
+        );
+
+        // 4. Execute FFmpeg
+        await executeFFmpeg(ffmpegCmd);
+
+        // 5. Stream output to client
+        const outputPath = `${tempDir}/output.mp4`;
+        const fileBuffer = readFileSync(outputPath);
+
+        res.setHeader('Content-Type', 'video/mp4');
+        res.setHeader('Content-Length', fileBuffer.length);
+        res.setHeader('Content-Disposition', 'attachment; filename="video.mp4"');
+        res.send(fileBuffer);
+
+        // Cleanup
+        rmSync(tempDir, { recursive: true, force: true });
+        console.log('✅ Video export completed and cleaned up');
+
+      } catch (err) {
+        rmSync(tempDir, { recursive: true, force: true });
+        throw err;
+      }
+
+    } catch (err: any) {
+      console.error('Video export error:', err);
+      return res.status(500).json({
+        status: 'error',
+        message: 'Export failed: ' + err.message
+      });
+    }
+  });
+
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
@@ -524,5 +682,45 @@ Ensure 'y' is strictly within 80 to 95 percentage range.`;
 }
 
 startServer();
+
+function getFFmpegPreset(quality: string): string {
+  const presets = {
+    fast: 'ultrafast',
+    balanced: 'fast',
+    high: 'medium',
+    highest: 'slow'
+  };
+  return presets[quality as keyof typeof presets] || 'fast';
+}
+
+function getFFmpegCRF(quality: string): number {
+  const values = { fast: 28, balanced: 23, high: 20, highest: 18 };
+  return values[quality as keyof typeof values] || 23;
+}
+
+function executeFFmpeg(args: string[]): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const ffmpeg = spawn('ffmpeg', args);
+    let stderr = '';
+
+    ffmpeg.stderr.on('data', (data) => {
+      stderr += data.toString();
+    });
+
+    ffmpeg.on('close', (code) => {
+      if (code !== 0) {
+        console.warn('FFmpeg stderr output:', stderr);
+        reject(new Error(`FFmpeg exited with code ${code}`));
+      } else {
+        resolve();
+      }
+    });
+
+    ffmpeg.on('error', (err) => {
+      reject(err);
+    });
+  });
+}
+
 
 
