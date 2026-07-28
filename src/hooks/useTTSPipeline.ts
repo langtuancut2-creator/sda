@@ -108,7 +108,11 @@ export const useTTSPipeline = (
       reader.onload = (e) => {
         const text = e.target?.result as string;
         const parsed = parseSRT(text);
-        setSubtitles(parsed);
+        if (typeof (window as any).requestIdleCallback === 'function') {
+          (window as any).requestIdleCallback(() => setSubtitles(parsed));
+        } else {
+          setTimeout(() => setSubtitles(parsed), 50);
+        }
       };
       reader.readAsText(subtitleFile);
     } else {

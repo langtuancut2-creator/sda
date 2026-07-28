@@ -37,7 +37,7 @@ export interface GraphicsFrameParams {
  * ============================================================
  */
 class FrameRenderCache {
-  private cache = new Map<string, CanvasImageSource>();
+  private cache = new Map<string, ImageBitmap | HTMLCanvasElement>();
   private lastCacheKey: string | null = null;
   private maxCacheSize: number = 30; // Keep last 30 frames
 
@@ -66,16 +66,26 @@ class FrameRenderCache {
     return `${frameTime}_${zoomLevel}_${isMirrored}_${blurIntensity}_${subtitleText}_${logoX}_${logoY}_${logoScale}_${fontSize}_${strokeWidth}_${textX}_${textY}_${isTextAutoCentered}_${showBgBar}_${bx}_${by}_${bw}_${bh}`;
   }
 
-  get(key: string): CanvasImageSource | null {
+  get(key: string): ImageBitmap | HTMLCanvasElement | null {
     return this.cache.get(key) || null;
   }
 
-  set(key: string, frame: CanvasImageSource): void {
-    if (this.cache.size >= this.maxCacheSize) {
-      const firstKey = this.cache.keys().next().value;
-      if (firstKey) this.cache.delete(firstKey);
+  setFromCanvas(key: string, canvas: HTMLCanvasElement | OffscreenCanvas): void {
+    if (typeof createImageBitmap === 'function') {
+      createImageBitmap(canvas as CanvasImageSource)
+        .then((bmp) => {
+          if (this.cache.size >= this.maxCacheSize) {
+            const firstKey = this.cache.keys().next().value;
+            if (firstKey) this.cache.delete(firstKey);
+          }
+          this.cache.set(key, bmp);
+        })
+        .catch(() => {
+          this.cache.set(key, canvas as unknown as HTMLCanvasElement);
+        });
+    } else {
+      this.cache.set(key, canvas as unknown as HTMLCanvasElement);
     }
-    this.cache.set(key, frame);
   }
 
   clear(): void {
@@ -94,31 +104,9 @@ class FrameRenderCache {
 
 const frameCache = new FrameRenderCache();
 
-let offscreenBlurCanvas: HTMLCanvasElement | OffscreenCanvas | null = null;
-let offscreenBlurCtx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null = null;
-
-function getBlurBuffer(w: number, h: number) {
-  if (!offscreenBlurCanvas) {
-    if (typeof OffscreenCanvas !== 'undefined') {
-      offscreenBlurCanvas = new OffscreenCanvas(w, h);
-    } else {
-      offscreenBlurCanvas = document.createElement('canvas');
-      offscreenBlurCanvas.width = w;
-      offscreenBlurCanvas.height = h;
-    }
-    offscreenBlurCtx = offscreenBlurCanvas.getContext('2d', { alpha: false }) as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null;
-  } else {
-    if (offscreenBlurCanvas.width !== w || offscreenBlurCanvas.height !== h) {
-      offscreenBlurCanvas.width = w;
-      offscreenBlurCanvas.height = h;
-    }
-  }
-  return { canvas: offscreenBlurCanvas, ctx: offscreenBlurCtx };
-}
-
 /**
  * ============================================================
- * OPTIMIZED BLUR USING CANVAS FILTER
+ * OPTIMIZED BLUR USING CANVAS FILTER (PADDED FOR ZERO EDGE ARTIFACTS)
  * ============================================================
  */
 function applyOptimizedBlur(
@@ -149,41 +137,44 @@ function applyOptimizedBlur(
   ctx.rect(bx, by, bw, bh);
   ctx.clip();
 
-  // Dark semi-transparent overlay
-  const bgOpacity = showBgBar ? 0.85 : 0.45;
-  ctx.fillStyle = `rgba(0, 0, 0, ${bgOpacity})`;
-  ctx.fillRect(bx, by, bw, bh);
+  const blurPx = Math.max(1, Math.round(blurIntensity * scaleFactor));
+  const pad = Math.max(30, blurPx * 2);
 
-  // High performance downscaled blur buffer (4x downscale)
-  const scale = 0.25;
-  const smallW = Math.max(1, Math.floor(videoWidth * scale));
-  const smallH = Math.max(1, Math.floor(videoHeight * scale));
+  // Apply CSS canvas blur filter directly
+  ctx.filter = `blur(${Math.min(blurPx, 50)}px)`;
 
-  const { canvas: bCanvas, ctx: bCtx } = getBlurBuffer(smallW, smallH);
-  if (bCtx) {
-    bCtx.imageSmoothingEnabled = true;
-    bCtx.imageSmoothingQuality = 'low';
+  const zoomFactor = zoomLevel / 100;
+  const mirrorFactor = isMirrored ? -1 : 1;
 
-    const zoomFactor = zoomLevel / 100;
-    const mirrorFactor = isMirrored ? -1 : 1;
-
-    bCtx.save();
-    if (zoomLevel === 100 && !isMirrored) {
-      bCtx.drawImage(video, 0, 0, smallW, smallH);
-    } else {
-      bCtx.translate(smallW / 2, smallH / 2);
-      bCtx.scale(zoomFactor * mirrorFactor, zoomFactor);
-      bCtx.drawImage(video, -smallW / 2, -smallH / 2, smallW, smallH);
-    }
-    bCtx.restore();
-
-    const smallBlurPx = Math.max(1, Math.round(blurIntensity * scaleFactor * scale * 1.0));
-
+  if (zoomLevel === 100 && !isMirrored) {
+    ctx.drawImage(
+      video,
+      -pad,
+      -pad,
+      videoWidth + pad * 2,
+      videoHeight + pad * 2
+    );
+  } else {
     ctx.save();
-    ctx.filter = `blur(${Math.min(smallBlurPx, 16)}px)`;
-    ctx.drawImage(bCanvas as CanvasImageSource, 0, 0, smallW, smallH, 0, 0, videoWidth, videoHeight);
+    ctx.translate(videoWidth / 2, videoHeight / 2);
+    ctx.scale(zoomFactor * mirrorFactor, zoomFactor);
+    ctx.drawImage(
+      video,
+      -videoWidth / 2 - pad,
+      -videoHeight / 2 - pad,
+      videoWidth + pad * 2,
+      videoHeight + pad * 2
+    );
     ctx.restore();
   }
+
+  // Turn off filter for overlay elements
+  ctx.filter = 'none';
+
+  // Optional subtle dark tint for background bar readability
+  const bgOpacity = showBgBar ? 0.6 : 0.2;
+  ctx.fillStyle = `rgba(0, 0, 0, ${bgOpacity})`;
+  ctx.fillRect(bx, by, bw, bh);
 
   ctx.restore();
 }
@@ -289,7 +280,7 @@ export function drawGraphicsFrame(params: GraphicsFrameParams): void {
     activeSubtitleText = getActiveSubtitle(subtitles, currentTime);
   }
 
-  // Frame caching - Only skip if video is paused and parameters haven't changed
+  // Frame caching - Check if frame exists in cache
   const isPaused = renderVideo.paused || renderVideo.ended;
   const cacheKey = frameCache.generateCacheKey(
     currentTime,
@@ -311,6 +302,14 @@ export function drawGraphicsFrame(params: GraphicsFrameParams): void {
     blurBox.w,
     blurBox.h
   );
+
+  const cached = frameCache.get(cacheKey);
+  if (cached) {
+    ctx.clearRect(0, 0, videoWidth, videoHeight);
+    ctx.drawImage(cached as CanvasImageSource, 0, 0, videoWidth, videoHeight);
+    frameCache.setLastKey(cacheKey);
+    return;
+  }
 
   if (isPaused && frameCache.getLastKey() === cacheKey) {
     return;
@@ -372,6 +371,40 @@ export function drawGraphicsFrame(params: GraphicsFrameParams): void {
       showBgBar
     );
   }
+
+  // After rendering, asynchronously capture frame to cache
+  try {
+    const canvasObj = (ctx as any).canvas || ctx;
+    if (canvasObj) {
+      frameCache.setFromCanvas(cacheKey, canvasObj);
+    }
+  } catch (e) {
+    /* ignore */
+  }
+}
+
+/**
+ * ============================================================
+ * PRECOMPUTE TEXT METRICS CACHE
+ * ============================================================
+ */
+const subtitleMetrics = new Map<string, TextMetrics>();
+
+export function precomputeSubtitleMetrics(
+  ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
+  subtitles: Array<{ text: string }>,
+  fontSize: number
+): void {
+  ctx.save();
+  ctx.font = `bold ${fontSize}px "Bangers", cursive, sans-serif`;
+  for (const s of subtitles) {
+    const cleanText = s.text.replace(/\n/g, ' ');
+    const key = `${fontSize}_${cleanText}`;
+    if (!subtitleMetrics.has(key)) {
+      subtitleMetrics.set(key, ctx.measureText(cleanText));
+    }
+  }
+  ctx.restore();
 }
 
 /**
@@ -412,8 +445,10 @@ function drawOptimizedSubtitle(
   const canvasStrokeWidth = (strokeWidthPercent / 100) * videoHeight * 0.12 * (fontSize / 24);
 
   ctx.save();
+  ctx.font = `bold ${canvasFontSize}px "Bangers", cursive, sans-serif`;
 
-  const metrics = textCache.getMeasuredText(ctx, cleanText, canvasFontSize);
+  const key = `${canvasFontSize}_${cleanText}`;
+  const metrics = subtitleMetrics.get(key) ?? subtitleMetrics.get(`${fontSize}_${cleanText}`) ?? ctx.measureText(cleanText);
   let actualTextWidth = metrics.width;
 
   if (isTextAutoCentered) {
@@ -422,7 +457,8 @@ function drawOptimizedSubtitle(
       const sf = maxAllowedWidth / actualTextWidth;
       canvasFontSize = Math.floor(canvasFontSize * sf);
       ctx.font = `bold ${canvasFontSize}px "Bangers", cursive, sans-serif`;
-      actualTextWidth = ctx.measureText(cleanText).width;
+      const scaledKey = `${canvasFontSize}_${cleanText}`;
+      actualTextWidth = subtitleMetrics.get(scaledKey)?.width ?? ctx.measureText(cleanText).width;
     }
   }
 

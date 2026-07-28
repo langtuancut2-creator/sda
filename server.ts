@@ -4,8 +4,9 @@ import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
 import { spawn } from "child_process";
-import { writeFileSync, readFileSync, mkdirSync, rmSync, createReadStream } from "fs";
+import { writeFileSync, readFileSync, mkdirSync, rmSync, createReadStream, renameSync, existsSync } from "fs";
 import { randomBytes } from "crypto";
+import multer from "multer";
 
 dotenv.config();
 
@@ -563,10 +564,118 @@ Ensure 'y' is strictly within 80 to 95 percentage range.`;
     }
   });
 
-  // OPTIMIZATION #6: Video Export with FFmpeg
-  app.post('/api/video/export', async (req, res) => {
+  // OPTIMIZATION #6: Video Export with FFmpeg (Supports Multipart Form Data Blobs & Base64 Fallback)
+  const upload = multer({ dest: '/tmp/upload_frames' });
+
+  app.post('/api/video/export', upload.any(), async (req, res) => {
     try {
-      const { frameDataUrl, audioBlob, settings } = req.body;
+      let settings: any = {};
+      if (typeof req.body?.settings === 'string') {
+        try { settings = JSON.parse(req.body.settings); } catch (e) {}
+      } else if (req.body?.settings) {
+        settings = req.body.settings;
+      }
+
+      const isMultipart = req.files && Array.isArray(req.files) && req.files.length > 0;
+
+      if (isMultipart) {
+        const tempDir = `/tmp/export_${randomBytes(8).toString('hex')}`;
+        mkdirSync(tempDir, { recursive: true });
+
+        try {
+          const filesArr = req.files as Express.Multer.File[];
+          const frameFiles = filesArr
+            .filter(f => f.fieldname === 'frames[]' || f.fieldname === 'frames' || f.originalname.startsWith('frame_'))
+            .sort((a, b) => a.originalname.localeCompare(b.originalname));
+
+          let frameCount = 0;
+          for (const file of frameFiles) {
+            const ext = path.extname(file.originalname) || '.jpg';
+            const targetPath = `${tempDir}/frame_${String(frameCount).padStart(6, '0')}${ext}`;
+            try {
+              renameSync(file.path, targetPath);
+            } catch (e) {
+              writeFileSync(targetPath, readFileSync(file.path));
+              rmSync(file.path, { force: true });
+            }
+            frameCount++;
+          }
+
+          const audioFile = filesArr.find(f => f.fieldname === 'audio');
+          let audioPath = '';
+          if (audioFile) {
+            audioPath = `${tempDir}/audio.wav`;
+            try {
+              renameSync(audioFile.path, audioPath);
+            } catch (e) {
+              writeFileSync(audioPath, readFileSync(audioFile.path));
+              rmSync(audioFile.path, { force: true });
+            }
+          }
+
+          // Cleanup any other leftover uploaded files
+          for (const f of filesArr) {
+            try {
+              if (existsSync(f.path)) rmSync(f.path, { force: true });
+            } catch (e) {}
+          }
+
+          const fps = settings.fps || 30;
+          const preset = getFFmpegPreset(settings.quality);
+          const crf = getFFmpegCRF(settings.quality);
+          const videoBitrate = settings.videoBitrate || '10000k';
+          const audioBitrate = settings.audioBitrate || '192k';
+
+          const frameExt = frameFiles.length > 0 && path.extname(frameFiles[0].originalname) ? path.extname(frameFiles[0].originalname) : '.jpg';
+
+          const ffmpegCmd = [
+            '-framerate', String(fps),
+            '-i', `${tempDir}/frame_%06d${frameExt}`
+          ];
+
+          if (audioPath) {
+            ffmpegCmd.push('-i', audioPath);
+          }
+
+          ffmpegCmd.push(
+            '-c:v', 'libx264',
+            '-preset', preset,
+            '-crf', String(crf),
+            '-b:v', videoBitrate
+          );
+
+          if (audioPath) {
+            ffmpegCmd.push('-c:a', 'aac', '-b:a', audioBitrate);
+          }
+
+          ffmpegCmd.push(
+            '-pix_fmt', 'yuv420p',
+            '-movflags', '+faststart',
+            '-y',
+            `${tempDir}/output.mp4`
+          );
+
+          await executeFFmpeg(ffmpegCmd);
+
+          const outputPath = `${tempDir}/output.mp4`;
+          const fileBuffer = readFileSync(outputPath);
+
+          res.setHeader('Content-Type', 'video/mp4');
+          res.setHeader('Content-Length', fileBuffer.length);
+          res.setHeader('Content-Disposition', 'attachment; filename="video.mp4"');
+          res.send(fileBuffer);
+
+          rmSync(tempDir, { recursive: true, force: true });
+          console.log('✅ Video export (multipart Blobs) completed and cleaned up');
+          return;
+        } catch (err) {
+          rmSync(tempDir, { recursive: true, force: true });
+          throw err;
+        }
+      }
+
+      // Fallback: Base64 JSON payload
+      const { frameDataUrl, audioBlob } = req.body;
 
       if (!frameDataUrl || !settings) {
         return res.status(400).json({ error: 'Missing export data' });
@@ -644,7 +753,7 @@ Ensure 'y' is strictly within 80 to 95 percentage range.`;
 
         // Cleanup
         rmSync(tempDir, { recursive: true, force: true });
-        console.log('✅ Video export completed and cleaned up');
+        console.log('✅ Video export (base64 JSON fallback) completed and cleaned up');
 
       } catch (err) {
         rmSync(tempDir, { recursive: true, force: true });

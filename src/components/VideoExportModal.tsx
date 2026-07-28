@@ -120,13 +120,29 @@ export const VideoExportModal: React.FC<VideoExportModalProps> = ({ isOpen, onCl
       const videoEl = videoRef.current;
       const { width, height, fps, videoBitrate, audioBitrate, resolution } = selectedPreset;
 
+      async function ensureAssetsReady(fontSpec = `bold ${fontSize}px "Bangers"`) {
+        try {
+          if (document.fonts && document.fonts.load) {
+            await document.fonts.load(fontSpec);
+          }
+        } catch (e) {}
+        if (logoImg && !logoImg.complete) {
+          await new Promise((resolve) => {
+            logoImg.onload = () => resolve(null);
+            logoImg.onerror = () => resolve(null);
+          });
+        }
+      }
+
+      await ensureAssetsReady();
+
       setExportProgress({
         status: 'rendering',
         progress: 10,
         message: `Đang trích xuất khung hình 0/${Math.floor(videoDuration * fps)}...`
       });
 
-      const framesBase64 = await extractFrames(
+      const framesBlobs = await extractFrames(
         {
           video: videoEl,
           duration: videoDuration,
@@ -182,48 +198,44 @@ export const VideoExportModal: React.FC<VideoExportModalProps> = ({ isOpen, onCl
       const emptyBuffer = audioCtx.createBuffer(2, Math.max(1, Math.floor(videoDuration * 48000)), 48000);
       const audioWavBlob = audioBufferToWavBlob(emptyBuffer);
 
-      // Convert audio blob to base64
-      const audioBase64 = await new Promise<string>((resolve) => {
-        const reader = new FileReader();
-        reader.onloadend = () => {
-          const res = (reader.result as string).split(',')[1];
-          resolve(res);
-        };
-        reader.readAsDataURL(audioWavBlob);
-      });
-
       if (cancelRef.current) throw new Error('CANCELLED');
 
-      // Step 3: Call Server API for FFmpeg MP4 encoding
+      // Step 3: Call Server API for FFmpeg MP4 encoding via Multipart Form Data
       setExportProgress({
         status: 'encoding',
         progress: 75,
         message: 'Đang mã hóa video H.264 + AAC bằng FFmpeg Engine...'
       });
 
+      const form = new FormData();
+      framesBlobs.forEach((b, i) =>
+        form.append('frames[]', b, `frame_${String(i).padStart(6, '0')}.jpg`)
+      );
+      form.append('audio', audioWavBlob, 'audio.wav');
+      form.append(
+        'settings',
+        JSON.stringify({
+          quality,
+          fps,
+          resolution,
+          videoBitrate,
+          audioBitrate
+        })
+      );
+      form.append(
+        'metadata',
+        JSON.stringify({
+          videoDuration,
+          totalFrames: framesBlobs.length,
+          audioSampleRate: 48000,
+          videoWidth: width,
+          videoHeight: height
+        })
+      );
+
       const response = await fetch('/api/video/export', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          frameDataUrl: Buffer.from(JSON.stringify(framesBase64)).toString('base64'),
-          audioBlob: audioBase64,
-          settings: {
-            quality,
-            fps,
-            resolution,
-            videoBitrate,
-            audioBitrate
-          },
-          metadata: {
-            videoDuration,
-            totalFrames: framesBase64.length,
-            audioSampleRate: 48000,
-            videoWidth: width,
-            videoHeight: height
-          }
-        })
+        body: form
       });
 
       if (!response.ok) {
@@ -246,13 +258,15 @@ export const VideoExportModal: React.FC<VideoExportModalProps> = ({ isOpen, onCl
 
         mediaRecorder.start();
         const img = new Image();
-        for (let i = 0; i < framesBase64.length; i++) {
+        for (let i = 0; i < framesBlobs.length; i++) {
           await new Promise<void>((r) => {
+            const url = URL.createObjectURL(framesBlobs[i]);
             img.onload = () => {
               ctx.drawImage(img, 0, 0);
+              URL.revokeObjectURL(url);
               r();
             };
-            img.src = framesBase64[i];
+            img.src = url;
           });
         }
         mediaRecorder.stop();

@@ -3,7 +3,7 @@ import { useVideoState } from '../hooks/useVideoState';
 import { useTTSPipeline } from '../hooks/useTTSPipeline';
 import { useBlurDetection } from '../hooks/useBlurDetection';
 import { useSettings } from './SettingsContext';
-import { drawVideoFrame } from '../VideoRenderer';
+import { drawVideoFrame, precomputeSubtitleMetrics } from '../VideoRenderer';
 
 type VideoProcessingContextType = ReturnType<typeof useVideoState> &
   ReturnType<typeof useTTSPipeline> &
@@ -29,6 +29,21 @@ export const VideoProcessingProvider: React.FC<{ children: React.ReactNode }> = 
     videoState.duration,
     videoState.setVideoPlaybackRate
   );
+
+  const subtitlesRef = useRef(ttsPipeline.subtitles);
+  useEffect(() => {
+    subtitlesRef.current = ttsPipeline.subtitles;
+    if (videoState.previewCanvasRef.current && ttsPipeline.subtitles.length > 0) {
+      const ctx = videoState.previewCanvasRef.current.getContext('2d');
+      if (ctx) {
+        const videoHeight = videoState.videoElementRef.current?.videoHeight || 720;
+        const fontSizePercent = (settings.fontSize / 720) * 100;
+        const canvasFontSize = (fontSizePercent / 100) * videoHeight;
+        precomputeSubtitleMetrics(ctx, ttsPipeline.subtitles, canvasFontSize);
+        precomputeSubtitleMetrics(ctx, ttsPipeline.subtitles, settings.fontSize);
+      }
+    }
+  }, [ttsPipeline.subtitles, settings.fontSize, videoState.previewCanvasRef, videoState.videoElementRef]);
 
   const blurDetection = useBlurDetection(
     videoState.containerRef,
@@ -181,14 +196,14 @@ export const VideoProcessingProvider: React.FC<{ children: React.ReactNode }> = 
         logoX: blurDetection.logoPosDragRef.current.x,
         logoY: blurDetection.logoPosDragRef.current.y,
         logoScale: blurDetection.logoScaleDragRef.current,
-        subtitles: ttsPipeline.subtitles,
+        subtitles: subtitlesRef.current,
         isTextAutoCentered: settings.isTextAutoCentered,
         textX: settings.textX,
         textY: settings.textY,
         fontSize: settings.fontSize,
         strokeWidth: settings.strokeWidth,
         scaleFactor: avgScale,
-        isDubbingActive: ttsPipeline.isAiVoiceActive && ttsPipeline.generatedAudioUrl !== null && ttsPipeline.dubAudioPositions.length === ttsPipeline.subtitles.length && videoState.audioElementRef.current !== null,
+        isDubbingActive: ttsPipeline.isAiVoiceActive && ttsPipeline.generatedAudioUrl !== null && ttsPipeline.dubAudioPositions.length === subtitlesRef.current.length && videoState.audioElementRef.current !== null,
         dubAudioPositions: ttsPipeline.dubAudioPositions,
         audioCurrentTime: videoState.audioElementRef.current?.currentTime,
         syncCheckpoints: ttsPipeline.syncCheckpoints,
@@ -209,7 +224,7 @@ export const VideoProcessingProvider: React.FC<{ children: React.ReactNode }> = 
   }, [
     videoState.videoUrl, videoState.previewCanvasRef, videoState.videoElementRef, videoState.containerRef, videoState.audioElementRef, videoState.videoPlaybackRate,
     settings.blurIntensity, settings.fullWidthSpan, settings.autoChineseSubBlur, settings.zoomLevel, settings.isMirrored,
-    ttsPipeline.subtitles, settings.isTextAutoCentered, settings.textX, settings.textY, settings.fontSize, settings.strokeWidth,
+    settings.isTextAutoCentered, settings.textX, settings.textY, settings.fontSize, settings.strokeWidth,
     videoState.logoUrl, settings.logoX, settings.logoY, settings.logoScale, settings.showBgBar,
     ttsPipeline.isAiVoiceActive, ttsPipeline.generatedAudioUrl, ttsPipeline.dubAudioPositions, ttsPipeline.syncCheckpoints, blurDetection
   ]);

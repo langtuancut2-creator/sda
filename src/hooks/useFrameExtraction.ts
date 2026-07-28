@@ -13,7 +13,7 @@ export function useFrameExtraction() {
   const extractFrames = async (
     settings: FrameExtractionSettings,
     onProgress?: (frameIndex: number, totalFrames: number, percent: number) => void
-  ): Promise<string[]> => {
+  ): Promise<Blob[]> => {
     const { video, duration, width, height, fps, graphicsParams } = settings;
     const totalFrames = Math.floor(duration * fps);
     const canvas = document.createElement('canvas');
@@ -26,7 +26,7 @@ export function useFrameExtraction() {
     }
 
     const scaleFactor = width / 1920;
-    const framesBase64: string[] = [];
+    const framesBlobs: Blob[] = [];
 
     // Helper to seek video to specific timestamp and wait for frame render
     const seekToTime = (time: number): Promise<void> => {
@@ -62,9 +62,13 @@ export function useFrameExtraction() {
           scaleFactor
         });
 
-        // Convert canvas to jpeg base64 frame data URL
-        const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
-        framesBase64.push(dataUrl);
+        // Convert canvas to JPEG blob
+        const blob = await new Promise<Blob | null>((res) =>
+          canvas.toBlob((b) => res(b), 'image/jpeg', 0.92)
+        );
+        if (blob) {
+          framesBlobs.push(blob);
+        }
 
         if (onProgress) {
           const percent = Math.round(((i + 1) / totalFrames) * 100);
@@ -79,7 +83,7 @@ export function useFrameExtraction() {
       }
     }
 
-    return framesBase64;
+    return framesBlobs;
   };
 
   return { extractFrames };
